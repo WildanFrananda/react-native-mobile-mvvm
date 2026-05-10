@@ -21,13 +21,14 @@ Clean lifecycle management, reactive state, and dependency injection — all in 
 
 React Native lacks an opinionated architecture standard. Teams coming from Android or Flutter are forced to learn a completely different mental model — hooks, context, and global stores — from scratch.
 
-This package solves that by providing **6 core modules** that map directly to patterns you already know:
+This package solves that by providing **7 core modules** that map directly to patterns you already know:
 
 | This Package | Android/Compose | Flutter | SwiftUI |
 |---|---|---|---|
 | `ViewModel` | `ViewModel` + `viewModelScope` | `ChangeNotifier` + `dispose()` | `ObservableObject` |
 | `StateFlow<T>` | `MutableStateFlow<T>` | `BehaviorSubject` | `@Published` |
 | `EventFlow<T>` | `SharedFlow(replay=0)` / `Channel` | `StreamController` one-shot | `PassthroughSubject` |
+| `ComputedStateFlow` | `derivedStateOf {}` | `combineLatest()` (RxDart) | `combine()` / Combine |
 | `useViewModel()` | `hiltViewModel()` | `context.watch<T>()` | `@StateObject` |
 | `useStream()` | `collectAsState()` | `StreamBuilder` | `.sink` + `@Published` |
 | `useEvent()` | `LaunchedEffect` + `SharedFlow` | `BlocListener` | `.onReceive` |
@@ -402,6 +403,126 @@ const CheckoutScreen = () => {
 - Does NOT store the value in React state — no re-render.
 - Subscribes on mount, unsubscribes on unmount.
 - Re-subscribes if `observable$` or `handler` reference changes.
+
+---
+
+### `ComputedStateFlow`
+
+Derives a new `Observable` from one or more `StateFlow` instances. Sugar over `combineLatest + map` — no need to call `.asObservable()` on each source or import RxJS operators manually.
+
+Analogous to `derivedStateOf {}` in Compose, `combine()` in Swift/Combine, and `combineLatest()` in RxDart/Flutter.
+
+```ts
+// ❌ Before — verbose, requires RxJS knowledge
+public readonly filteredList$ = combineLatest([
+  this._items.asObservable(),
+  this._query.asObservable(),
+]).pipe(
+  map(([items, query]) => items.filter((i) => i.name.includes(query))),
+  takeUntil(this.destroy$),
+);
+
+// ✅ After — reads like derivedStateOf in Compose
+public readonly filteredList$ = ComputedStateFlow.from(
+  [this._items, this._query],
+  ([items, query]) => items.filter((i) => i.name.includes(query)),
+);
+```
+
+**Full example — multiple sources, multiple derived states:**
+
+```ts
+// ProductListViewModel.ts
+import { ViewModel, StateFlow, ComputedStateFlow } from 'react-native-mobile-mvvm';
+
+interface Product {
+  id: string;
+  name: string;
+  price: number;
+  inStock: boolean;
+}
+
+export class ProductListViewModel extends ViewModel {
+  private _products = new StateFlow<Product[]>([]);
+  private _searchQuery = new StateFlow<string>('');
+  private _showInStockOnly = new StateFlow<boolean>(false);
+
+  public readonly searchQuery$ = this._searchQuery.asObservable();
+  public readonly showInStockOnly$ = this._showInStockOnly.asObservable();
+
+  // Derived — recomputes automatically when any source changes
+  public readonly filteredProducts$ = ComputedStateFlow.from(
+    [this._products, this._searchQuery, this._showInStockOnly],
+    ([products, query, inStockOnly]) =>
+      products
+        .filter((p) => p.name.toLowerCase().includes(query.toLowerCase()))
+        .filter((p) => (inStockOnly ? p.inStock : true)),
+  );
+
+  // Single-source derived state
+  public readonly resultCount$ = ComputedStateFlow.from(
+    [this._products],
+    ([products]) => products.length,
+  );
+
+  onSearchChanged(query: string) {
+    this._searchQuery.value = query;
+  }
+
+  toggleInStockFilter() {
+    this._showInStockOnly.value = !this._showInStockOnly.value;
+  }
+}
+```
+
+```tsx
+// ProductListScreen.tsx
+import { useViewModel, useStream } from 'react-native-mobile-mvvm';
+import { ProductListViewModel } from './ProductListViewModel';
+
+const ProductListScreen = () => {
+  const vm = useViewModel(ProductListViewModel);
+
+  // These re-render automatically when _products, _searchQuery, or _showInStockOnly changes
+  const products = useStream(vm.filteredProducts$, []);
+  const resultCount = useStream(vm.resultCount$, 0);
+  const showInStockOnly = useStream(vm.showInStockOnly$, false);
+
+  return (
+    <View>
+      <TextInput
+        placeholder="Search..."
+        onChangeText={(t) => vm.onSearchChanged(t)}
+      />
+      <Button
+        title={showInStockOnly ? 'In Stock Only ✓' : 'Show All'}
+        onPress={() => vm.toggleInStockFilter()}
+      />
+      <Text>{resultCount} products found</Text>
+      <FlatList
+        data={products}
+        keyExtractor={(item) => item.id}
+        renderItem={({ item }) => <Text>{item.name}</Text>}
+      />
+    </View>
+  );
+};
+```
+
+#### API
+
+| | Description |
+|---|---|
+| `ComputedStateFlow.from(sources, compute)` | Creates a derived Observable from an array of StateFlow instances |
+
+| Parameter | Type | Description |
+|---|---|---|
+| `sources` | `StateFlow<T>[]` | One or more StateFlow instances to observe |
+| `compute` | `(values: T[]) => R` | Pure function that derives the new value. Receives current values of all sources as a typed tuple. |
+
+**Returns:** `Observable<R>` — use `useStream(vm.derived$, defaultValue)` to consume in the UI.
+
+> **Note:** `ComputedStateFlow.from()` emits immediately on subscribe because `StateFlow` is backed by `BehaviorSubject`. The first render will already have the correct derived value — no flicker.
 
 ---
 
