@@ -355,7 +355,7 @@ import { ViewModel, StateFlow, EventFlow } from 'react-native-mobile-mvvm';
 export class CheckoutViewModel extends ViewModel {
   // State — useStream() reads this
   private _isLoading = new StateFlow<boolean>(false);
-  public readonly isLoading$ = this._isLoading.asObservable();
+  public readonly isLoading$ = this._isLoading.asReadOnly();
 
   // Events — useEvent() listens to these, never replayed
   private _navigateTo = new EventFlow<string>();
@@ -783,13 +783,13 @@ export class ProductListViewModel extends ViewModel {
   private _isLoading = new StateFlow<boolean>(false);
   private _error = new StateFlow<string | null>(null);
 
-  public readonly isLoading$ = this._isLoading.asObservable();
-  public readonly error$ = this._error.asObservable();
+  public readonly isLoading$ = this._isLoading.asReadOnly();
+  public readonly error$ = this._error.asReadOnly();
 
   // Derived state — filtered products based on search query
   public readonly filteredProducts$ = combineLatest([
-    this._products.asObservable(),
-    this._searchQuery.asObservable(),
+    this._products,
+    this._searchQuery,
   ]).pipe(
     map(([products, query]) =>
       query.trim()
@@ -858,8 +858,8 @@ export class SearchViewModel extends ViewModel {
   private _query   = new StateFlow<string>('');
   private _results = new StateFlow<Product[]>([]);
 
-  public readonly query$   = this._query.asObservable();
-  public readonly results$ = this._results.asObservable();
+  public readonly query$   = this._query.asReadOnly();
+  public readonly results$ = this._results.asReadOnly();
 
   constructor() {
     super();

@@ -18,9 +18,13 @@
  *
  * ### 1. Define a ViewModel
  * ```ts
+ * import { ViewModel, StateFlow, ReadOnlyStateFlow } from 'react-native-mobile-mvvm';
+ *
  * export class CounterViewModel extends ViewModel {
  *   private _count = new StateFlow<number>(0);
- *   public readonly count$ = this._count.asObservable();
+ *
+ *   // Expose as read-only state
+ *   public readonly count$: ReadOnlyStateFlow<number> = this._count;
  *
  *   increment() { this._count.value += 1; }
  *   decrement() { this._count.value -= 1; }
@@ -46,6 +50,7 @@
 // Core — ViewModel, StateFlow, EventFlow, ComputedStateFlow & UiState
 export { ViewModel } from './core/ViewModel';
 export { StateFlow } from './core/StateFlow';
+export type { ReadOnlyStateFlow } from './core/StateFlow';
 export { EventFlow } from './core/EventFlow';
 export { ComputedStateFlow } from './core/ComputedStateFlow';
 export { UiState } from './core/UiState';
