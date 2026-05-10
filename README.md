@@ -21,7 +21,7 @@ Clean lifecycle management, reactive state, and dependency injection — all in 
 
 React Native lacks an opinionated architecture standard. Teams coming from Android or Flutter are forced to learn a completely different mental model — hooks, context, and global stores — from scratch.
 
-This package solves that by providing **7 core modules** that map directly to patterns you already know:
+This package solves that by providing **8 core modules** that map directly to patterns you already know:
 
 | This Package | Android/Compose | Flutter | SwiftUI |
 |---|---|---|---|
@@ -29,9 +29,11 @@ This package solves that by providing **7 core modules** that map directly to pa
 | `StateFlow<T>` | `MutableStateFlow<T>` | `BehaviorSubject` | `@Published` |
 | `EventFlow<T>` | `SharedFlow(replay=0)` / `Channel` | `StreamController` one-shot | `PassthroughSubject` |
 | `ComputedStateFlow` | `derivedStateOf {}` | `combineLatest()` (RxDart) | `combine()` / Combine |
+| `UiState<T>` | `sealed class UiState` | `ConnectionState` / BLoC states | Enum-driven state |
 | `useViewModel()` | `hiltViewModel()` | `context.watch<T>()` | `@StateObject` |
 | `useStream()` | `collectAsState()` | `StreamBuilder` | `.sink` + `@Published` |
 | `useEvent()` | `LaunchedEffect` + `SharedFlow` | `BlocListener` | `.onReceive` |
+| `useUiState()` | `when (state) { is Loading }` | `AsyncSnapshot` fields | `switch state { }` |
 | `@Injectable` | `@HiltViewModel` | `@injectable` (GetIt) | — |
 
 ### StateFlow vs EventFlow — When to use which
@@ -523,6 +525,128 @@ const ProductListScreen = () => {
 **Returns:** `Observable<R>` — use `useStream(vm.derived$, defaultValue)` to consume in the UI.
 
 > **Note:** `ComputedStateFlow.from()` emits immediately on subscribe because `StateFlow` is backed by `BehaviorSubject`. The first render will already have the correct derived value — no flicker.
+
+---
+
+### `UiState<T>` + `useUiState()`
+
+A sealed state type for async operations. Replaces the anti-pattern of three separate StateFlows (`isLoading`, `data`, `error`) with a single, mutually exclusive state.
+
+Analogous to `sealed class UiState` in Kotlin/Compose and `AsyncSnapshot` + `ConnectionState` in Flutter.
+
+**In the ViewModel — factory helpers mirror Kotlin sealed class constructors:**
+
+```ts
+// UserViewModel.ts
+import { ViewModel, StateFlow, UiState } from 'react-native-mobile-mvvm';
+
+interface User {
+  id: string;
+  name: string;
+  email: string;
+}
+
+export class UserViewModel extends ViewModel {
+  // ❌ Anti-pattern — three fragmented StateFlows
+  // private _isLoading = new StateFlow<boolean>(false);
+  // private _user = new StateFlow<User | null>(null);
+  // private _error = new StateFlow<string | null>(null);
+
+  // ✅ One source of truth — mutually exclusive states
+  private _userState = new StateFlow<UiState<User>>(UiState.idle());
+  public readonly userState$ = this._userState.asObservable();
+
+  async fetchUser(id: string) {
+    this._userState.value = UiState.loading();
+    try {
+      const res = await fetch(`/api/users/${id}`, {
+        signal: this.abortController.signal,
+      });
+      const user: User = await res.json();
+      this._userState.value = UiState.success(user);
+    } catch (e) {
+      if ((e as Error).name !== 'AbortError') {
+        this._userState.value = UiState.error((e as Error).message);
+      }
+    }
+  }
+}
+```
+
+**In the UI — `useUiState` destructures into readable booleans:**
+
+```tsx
+// UserScreen.tsx
+import { useViewModel, useUiState } from 'react-native-mobile-mvvm';
+import { UserViewModel } from './UserViewModel';
+
+const UserScreen = () => {
+  const vm = useViewModel(UserViewModel);
+
+  // Analogous to collectAsState() + when(state) in Compose
+  // or AsyncSnapshot fields (hasData, hasError) in Flutter
+  const { data, isLoading, isError, error, isIdle } = useUiState(vm.userState$);
+
+  if (isIdle) {
+    return <Button title="Load Profile" onPress={() => vm.fetchUser('123')} />;
+  }
+
+  if (isLoading) {
+    return <ActivityIndicator size="large" />;
+  }
+
+  if (isError) {
+    return (
+      <View>
+        <Text style={{ color: 'red' }}>{error}</Text>
+        <Button title="Retry" onPress={() => vm.fetchUser('123')} />
+      </View>
+    );
+  }
+
+  // TypeScript knows data is non-null here because isError/isLoading/isIdle are false
+  return (
+    <View>
+      <Text style={{ fontSize: 24 }}>{data!.name}</Text>
+      <Text>{data!.email}</Text>
+    </View>
+  );
+};
+```
+
+**Pattern matching on raw state — TypeScript narrows the type per branch:**
+
+```tsx
+const { state } = useUiState(vm.userState$);
+
+switch (state.status) {
+  case 'idle':    return <Button title="Load" onPress={() => vm.fetchUser('1')} />;
+  case 'loading': return <ActivityIndicator />;
+  case 'success': return <Text>{state.data.name}</Text>; // state.data typed as User
+  case 'error':   return <Text>{state.message}</Text>;
+}
+```
+
+#### `UiState<T>` factory methods
+
+| Method | Returns | Description |
+|---|---|---|
+| `UiState.idle()` | `UiState<T>` | Initial state — nothing loaded yet |
+| `UiState.loading()` | `UiState<T>` | Async operation in progress |
+| `UiState.success(data)` | `UiState<T>` | Operation succeeded, carries data |
+| `UiState.error(message)` | `UiState<T>` | Operation failed, carries error message |
+
+#### `useUiState(observable$, initialState?)` return value
+
+| Field | Type | Description |
+|---|---|---|
+| `state` | `UiState<T>` | Raw state — for exhaustive pattern matching |
+| `data` | `T \| null` | Data when `status === 'success'`, null otherwise |
+| `isIdle` | `boolean` | True when `status === 'idle'` |
+| `isLoading` | `boolean` | True when `status === 'loading'` |
+| `isSuccess` | `boolean` | True when `status === 'success'` |
+| `isError` | `boolean` | True when `status === 'error'` |
+| `error` | `string \| null` | Error message when `status === 'error'`, null otherwise |
 
 ---
 
