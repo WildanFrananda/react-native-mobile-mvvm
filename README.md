@@ -31,8 +31,9 @@ This package solves that by providing **8 core modules** that map directly to pa
 | `ComputedStateFlow` | `derivedStateOf {}` | `combineLatest()` (RxDart) | `combine()` / Combine |
 | `UiState<T>` | `sealed class UiState` | `ConnectionState` / BLoC states | Enum-driven state |
 | `useViewModel()` | `hiltViewModel()` | `context.watch<T>()` | `@StateObject` |
-| `useStream()` | `collectAsState()` | `StreamBuilder` | `.sink` + `@Published` |
+| `useStream()` | `collectAsStateWithLifecycle()` | `StreamBuilder` | `.sink` + `@Published` |
 | `useEvent()` | `LaunchedEffect` + `SharedFlow` | `BlocListener` | `.onReceive` |
+| `useInit()` | `LaunchedEffect(Unit)` | `initState()` | `.task { }` |
 | `useUiState()` | `when (state) { is Loading }` | `AsyncSnapshot` fields | `switch state { }` |
 | `ViewModelScope` | Nav graph scope | `MultiProvider` / `InheritedWidget` | `@EnvironmentObject` |
 | `useScopedViewModel()` | `hiltViewModel(navBackStackEntry)` | `context.read<T>()` at scope level | `@EnvironmentObject` |
@@ -223,6 +224,23 @@ _count.asObservable();  // Expose a read-only stream to the UI
 | Parameter | Type | Description |
 |---|---|---|
 | `initialValue` | `T` | The starting value of the state. |
+| `isEqual` | `(a: T, b: T) => boolean` | Optional. Equality check — skips emit if returns `true`. Default: `Object.is` (reference equality). |
+
+Like Kotlin's `StateFlow`, value setter only emits when the value actually changes. For primitive types, this works out of the box. For objects, provide a custom equality function:
+
+```ts
+// Default — reference equality (Object.is). Primitives deduplicated automatically.
+private _count = new StateFlow<number>(0);
+this._count.value = 5;
+this._count.value = 5; // no emit — same value
+
+// Custom equality — deduplicate by id, not reference
+private _user = new StateFlow<User>(initial, (a, b) => a.id === b.id);
+
+// Deep equality — install lodash separately
+import isEqual from 'lodash.isequal';
+private _config = new StateFlow<Config>(initial, isEqual);
+```
 
 #### Members
 
@@ -289,6 +307,37 @@ const count = useStream(vm.count$, 0);
 - Re-subscribes if the `observable$` reference changes.
 - Only triggers a re-render when the value actually changes.
 - For `StateFlow` (BehaviorSubject), reads the current value synchronously on first render — no flicker with `defaultValue`.
+- **AppState-aware** — pauses subscription when app goes to background, resumes on foreground. Analog to `collectAsStateWithLifecycle()` in Compose. Saves battery and prevents stale updates while UI is not visible.
+
+---
+
+### `useInit(fn)`
+
+Runs a callback exactly once when the component mounts. Handles both sync and async callbacks.
+
+Analogous to `LaunchedEffect(Unit)` in Compose, `initState()` in Flutter, and `.task { }` in SwiftUI.
+
+```tsx
+const UserScreen = () => {
+  const vm = useViewModel(UserViewModel);
+
+  // ❌ Before — developer must remember empty dependency array
+  useEffect(() => { vm.fetchUser('123'); }, []);
+
+  // ✅ After — intent is clear, no dependency array footgun
+  useInit(() => vm.fetchUser('123'));
+
+  // Async works too — errors handled inside ViewModel via UiState
+  useInit(async () => {
+    await vm.loadDashboard();
+  });
+
+  const { data, isLoading, isError, error } = useUiState(vm.userState$);
+  // ...
+};
+```
+
+> **Note:** Do not use `useInit` for subscriptions or cleanup — use `useEffect` with a cleanup function for those.
 
 ---
 

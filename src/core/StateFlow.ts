@@ -8,6 +8,10 @@ import { BehaviorSubject, Observable } from 'rxjs';
  * - `BehaviorSubject<T>` in RxDart/Flutter
  * - `@State` / `@Published` in SwiftUI
  *
+ * Like Kotlin's `StateFlow`, this only emits when the value actually changes.
+ * By default uses `Object.is` (reference equality). Pass a custom `isEqual`
+ * function for structural/deep equality on objects.
+ *
  * Usage pattern inside a ViewModel:
  * ```ts
  * class CounterViewModel extends ViewModel {
@@ -21,12 +25,27 @@ import { BehaviorSubject, Observable } from 'rxjs';
  *   }
  * }
  * ```
+ *
+ * Custom equality — prevents re-renders when object identity changes but content is the same:
+ * ```ts
+ * // Only emits when user.id changes — not on every object reassignment
+ * private _user = new StateFlow<User>(initial, (a, b) => a.id === b.id);
+ *
+ * // Deep equality via lodash (install separately)
+ * import isEqual from 'lodash.isequal';
+ * private _config = new StateFlow<Config>(initial, isEqual);
+ * ```
  */
 export class StateFlow<T> {
   private readonly _subject: BehaviorSubject<T>;
+  private readonly _isEqual: (a: T, b: T) => boolean;
 
-  constructor(initialValue: T) {
+  constructor(
+    initialValue: T,
+    isEqual: (a: T, b: T) => boolean = Object.is,
+  ) {
     this._subject = new BehaviorSubject<T>(initialValue);
+    this._isEqual = isEqual;
   }
 
   /**
@@ -42,7 +61,9 @@ export class StateFlow<T> {
    * automatically receive the new value and trigger a re-render.
    */
   set value(newValue: T) {
-    this._subject.next(newValue);
+    if (!this._isEqual(this._subject.getValue(), newValue)) {
+      this._subject.next(newValue);
+    }
   }
 
   /**

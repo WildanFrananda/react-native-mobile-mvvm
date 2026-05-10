@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
-import { Observable } from 'rxjs';
+import { useEffect, useRef, useState } from 'react';
+import { AppState } from 'react-native';
+import { Observable, Subscription } from 'rxjs';
 
 /**
  * useStream<T> — Subscribe to an RxJS Observable and sync it to React state.
@@ -38,20 +39,38 @@ export function useStream<T>(observable$: Observable<T>, defaultValue: T): T {
     // BehaviorSubject (StateFlow) emits synchronously on subscribe, so this captures
     // the current value before the first paint. Plain Observables fall back to defaultValue.
     let current = defaultValue;
-    const sub = observable$.subscribe((v) => {
-      current = v;
-    });
+    const sub = observable$.subscribe((v) => { current = v; });
     sub.unsubscribe();
     return current;
   });
 
+  const subscriptionRef = useRef<Subscription | null>(null);
+
   useEffect(() => {
-    const subscription = observable$.subscribe({
-      next: (value) => setState(value),
+    const subscribe = () => {
+      subscriptionRef.current?.unsubscribe();
+      subscriptionRef.current = observable$.subscribe({
+        next: (value) => setState(value),
+      });
+    };
+
+    subscribe();
+
+    // Analog to collectAsStateWithLifecycle() in Compose — pause subscription
+    // when app goes to background, resume on foreground. Prevents unnecessary
+    // state updates while UI is not visible and saves battery.
+    const appStateSub = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        subscribe(); // resubscribe — BehaviorSubject replays latest value immediately
+      } else {
+        subscriptionRef.current?.unsubscribe();
+        subscriptionRef.current = null;
+      }
     });
 
     return () => {
-      subscription.unsubscribe();
+      subscriptionRef.current?.unsubscribe();
+      appStateSub.remove();
     };
   }, [observable$]);
 

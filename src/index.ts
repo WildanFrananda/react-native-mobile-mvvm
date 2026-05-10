@@ -55,6 +55,7 @@ export type { UiState as UiStateType } from './core/UiState';
 export { useViewModel } from './hooks/useViewModel';
 export { useStream } from './hooks/useStream';
 export { useEvent } from './hooks/useEvent';
+export { useInit } from './hooks/useInit';
 export { useUiState } from './hooks/useUiState';
 export type { UiStateResult } from './hooks/useUiState';
 
