@@ -56,6 +56,7 @@ export { useViewModel } from './hooks/useViewModel';
 export { useStream } from './hooks/useStream';
 export { useEvent } from './hooks/useEvent';
 export { useInit } from './hooks/useInit';
+export { useLifecycle } from './hooks/useLifecycle';
 export { useUiState } from './hooks/useUiState';
 export type { UiStateResult } from './hooks/useUiState';
 

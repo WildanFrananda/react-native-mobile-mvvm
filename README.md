@@ -34,6 +34,7 @@ This package solves that by providing **8 core modules** that map directly to pa
 | `useStream()` | `collectAsStateWithLifecycle()` | `StreamBuilder` | `.sink` + `@Published` |
 | `useEvent()` | `LaunchedEffect` + `SharedFlow` | `BlocListener` | `.onReceive` |
 | `useInit()` | `LaunchedEffect(Unit)` | `initState()` | `.task { }` |
+| `useLifecycle()` | `DisposableEffect(Unit)` | `StatefulWidget` + `dispose()` | `.onAppear` + `.onDisappear` |
 | `useUiState()` | `when (state) { is Loading }` | `AsyncSnapshot` fields | `switch state { }` |
 | `ViewModelScope` | Nav graph scope | `MultiProvider` / `InheritedWidget` | `@EnvironmentObject` |
 | `useScopedViewModel()` | `hiltViewModel(navBackStackEntry)` | `context.read<T>()` at scope level | `@EnvironmentObject` |
@@ -337,7 +338,53 @@ const UserScreen = () => {
 };
 ```
 
-> **Note:** Do not use `useInit` for subscriptions or cleanup — use `useEffect` with a cleanup function for those.
+> **Note:** Do not use `useInit` for subscriptions or cleanup — use `useLifecycle` for those.
+
+---
+
+### `useLifecycle(onMount, onUnmount)`
+
+Runs `onMount` when the component appears and `onUnmount` when it disappears. Both are called exactly once.
+
+#### When to use `useInit` vs `useLifecycle`
+
+| Hook | Use when… |
+|---|---|
+| `useInit(fn)` | Trigger a one-shot action on mount. No cleanup needed (e.g. `vm.fetchUser()`) |
+| `useLifecycle(onMount, onUnmount)` | Start a resource on mount **and** stop it on unmount (e.g. tracking, sockets, sensors) |
+
+#### Full Example
+
+```tsx
+import { useViewModel, useStream, useLifecycle } from 'react-native-mobile-mvvm';
+import { MapViewModel } from './MapViewModel';
+
+const MapScreen = () => {
+  const vm = useViewModel(MapViewModel);
+
+  // ✅ Two clear callbacks — no magic return function
+  useLifecycle(
+    () => vm.startLocationTracking(),
+    () => vm.stopLocationTracking(),
+  );
+
+  const location = useStream(vm.location$, null);
+
+  return <MapView region={location} />;
+};
+```
+
+Common use cases:
+- GPS / location tracking
+- WebSocket connections
+- Bluetooth / sensor listeners
+- Analytics session tracking
+- Background timers that need explicit cancellation
+
+| Parameter | Type | Description |
+|---|---|---|
+| `onMount` | `() => void` | Called once when the component mounts |
+| `onUnmount` | `() => void` | Called once when the component unmounts (guaranteed) |
 
 ---
 
@@ -948,6 +995,153 @@ export class ProductListViewModel extends ViewModel {
   }
 }
 ```
+
+---
+
+## Recipes
+
+Common real-world patterns with idiomatic solutions. These are the equivalent of the **"idioms"** section in official Compose documentation.
+
+### 🔍 Search with Debounce (`reactTo`)
+
+The most common pattern in any app with a search bar. In Compose, the idiomatic solution is:
+
+```kotlin
+// Compose — idiomatic
+viewModelScope.launch {
+  snapshotFlow { searchQuery }
+    .debounce(300)
+    .distinctUntilChanged()
+    .collectLatest { query -> search(query) }
+}
+```
+
+This package provides `reactTo()` — a protected method on `ViewModel` that composes the exact same pipeline:
+
+```ts
+// This package — reads like Compose, no RxJS operators to import
+export class SearchViewModel extends ViewModel {
+  private _query   = new StateFlow<string>('');
+  private _results = new StateFlow<Product[]>([]);
+
+  public readonly query$   = this._query.asObservable();
+  public readonly results$ = this._results.asObservable();
+
+  constructor() {
+    super();
+    // ✅ One line — debounce + distinctUntilChanged + switchMap + takeUntil all handled
+    this.reactTo(this._query, 300, async (q) => {
+      this._results.value = await productApi.search(q);
+    });
+  }
+
+  onQueryChanged(query: string) { this._query.value = query; }
+}
+```
+
+```tsx
+// SearchScreen.tsx
+const SearchScreen = () => {
+  const vm = useViewModel(SearchViewModel);
+  const results = useStream(vm.results$, []);
+
+  return (
+    <View>
+      <TextInput
+        placeholder="Search products..."
+        onChangeText={(t) => vm.onQueryChanged(t)}
+      />
+      <FlatList
+        data={results}
+        keyExtractor={(item) => item.id}
+        renderItem={({ item }) => <Text>{item.name}</Text>}
+      />
+    </View>
+  );
+};
+```
+
+#### What `reactTo` does internally
+
+```ts
+stateFlow.subject
+  .pipe(
+    debounceTime(300),      // wait 300ms after last keystroke
+    distinctUntilChanged(), // skip if value didn't change
+    switchMap(async (q) => {
+      // switchMap = collectLatest — cancels previous async call
+      // if user types again before it finishes
+      this._results.value = await productApi.search(q);
+    }),
+    takeUntil(this.destroy$), // auto-cleanup on unmount
+  )
+  .subscribe();
+```
+
+> **For developers coming from Compose:** `switchMap` is the RxJS equivalent of `collectLatest` — it cancels the previous call when a new value arrives. This prevents stale results from a slow request arriving after a newer, faster request.
+
+#### `reactTo` API
+
+| Parameter | Type | Description |
+|---|---|---|
+| `stateFlow` | `StateFlow<T>` | The state to observe |
+| `debounceMs` | `number` | Milliseconds to wait after last change. Use `0` to skip debouncing |
+| `handler` | `(value: T) => void \| Promise<void>` | Called with the latest value. Previous call is cancelled if a new value arrives |
+
+#### Variants
+
+```ts
+// Immediate reaction — no debounce, but still cancels stale calls (switchMap)
+this.reactTo(this._selectedTab, 0, (tab) => this.loadTabContent(tab));
+
+// Longer debounce for expensive operations (e.g. full-text search API)
+this.reactTo(this._searchQuery, 500, async (q) => {
+  this._results.value = await this.repo.fullTextSearch(q);
+});
+```
+
+#### Prefer manual RxJS? That's fine too.
+
+`reactTo` is sugar over standard RxJS. If you need operators not covered by `reactTo` (e.g. `mergeMap`, `retry`, `catchError`), write the pipeline directly — `destroy$` and `subject` are there for you:
+
+```ts
+import { debounceTime, distinctUntilChanged, switchMap, takeUntil, catchError, EMPTY } from 'rxjs';
+
+this._query.subject
+  .pipe(
+    debounceTime(300),
+    distinctUntilChanged(),
+    switchMap((q) => from(productApi.search(q)).pipe(
+      catchError(() => EMPTY), // handle search errors without killing the stream
+    )),
+    takeUntil(this.destroy$),
+  )
+  .subscribe((results) => (this._results.value = results));
+```
+
+---
+
+### 🛰️ Resource Lifecycle (Start on Mount / Stop on Unmount)
+
+The equivalent of `DisposableEffect` in Compose. Use `useLifecycle` in the UI layer:
+
+```kotlin
+// Compose
+DisposableEffect(Unit) {
+  vm.startLocationTracking()
+  onDispose { vm.stopLocationTracking() }
+}
+```
+
+```tsx
+// This package — identical contract
+useLifecycle(
+  () => vm.startLocationTracking(),
+  () => vm.stopLocationTracking(),
+);
+```
+
+See [`useLifecycle`](#uselifecycleonmount-onunmount) in the API reference for the full documentation.
 
 ---
 

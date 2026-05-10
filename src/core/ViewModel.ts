@@ -1,4 +1,11 @@
 import { Observable, Subject } from 'rxjs';
+import {
+  debounceTime,
+  distinctUntilChanged,
+  switchMap,
+  takeUntil,
+} from 'rxjs/operators';
+import type { StateFlow } from './StateFlow';
 
 /**
  * ViewModel — Abstract base class for all ViewModels in the application.
@@ -128,5 +135,78 @@ export abstract class ViewModel {
       this._destroy$.next();
       this._destroy$.complete();
     }
+  }
+
+  /**
+   * reactTo — React to state changes with debounce and automatic cancellation.
+   *
+   * Sugar for the search/debounce pattern. Internally composes the
+   * canonical RxJS pipeline so you don't have to:
+   *
+   * ```ts
+   * stateFlow.subject
+   *   .pipe(
+   *     debounceTime(debounceMs),
+   *     distinctUntilChanged(),
+   *     switchMap((value) => Promise.resolve(handler(value))),
+   *     takeUntil(this.destroy$),
+   *   )
+   *   .subscribe();
+   * ```
+   *
+   * `switchMap` cancels the previous handler if a new value arrives before it
+   * resolves — preventing stale results from slow async operations.
+   *
+   * ## Usage
+   *
+   * ### Search with debounce (most common pattern)
+   *
+   * ```ts
+   * export class SearchViewModel extends ViewModel {
+   *   private _query   = new StateFlow<string>('');
+   *   private _results = new StateFlow<Product[]>([]);
+   *
+   *   public readonly query$   = this._query.asObservable();
+   *   public readonly results$ = this._results.asObservable();
+   *
+   *   constructor() {
+   *     super();
+   *     // ✅ One call — debounce + dedup + cancel + cleanup all handled
+   *     this.reactTo(this._query, 300, async (q) => {
+   *       this._results.value = await productApi.search(q);
+   *     });
+   *   }
+   *
+   *   onQueryChanged(q: string) { this._query.value = q; }
+   * }
+   * ```
+   *
+   * ### Immediate reaction — no debounce, but still cancels stale calls
+   *
+   * ```ts
+   * this.reactTo(this._selectedTab, 0, (tab) => this.loadTabContent(tab));
+   * ```
+   *
+   * @param stateFlow   - The `StateFlow<T>` to observe
+   * @param debounceMs  - Milliseconds to wait after the last change. Use `0` to skip debouncing.
+   * @param handler     - Called with the latest value. Previous call is cancelled if a new
+   *                      value arrives before it finishes (equivalent to `collectLatest`).
+   */
+  protected reactTo<T>(
+    stateFlow: StateFlow<T>,
+    debounceMs: number,
+    handler: (value: T) => void | Promise<void>,
+  ): void {
+    stateFlow.subject
+      .pipe(
+        debounceTime(debounceMs),
+        distinctUntilChanged(),
+        switchMap((value: T) => {
+          const result = handler(value);
+          return result instanceof Promise ? result : Promise.resolve(result);
+        }),
+        takeUntil(this.destroy$),
+      )
+      .subscribe();
   }
 }
