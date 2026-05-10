@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { Observable } from 'rxjs';
 
 /**
@@ -12,7 +12,9 @@ import { Observable } from 'rxjs';
  * Unlike `useStream`, this hook does NOT store the value in React state.
  * It is side-effect only — navigation, showing a snackbar, playing a sound, etc.
  *
- * IMPORTANT: Wrap `handler` in `useCallback` to avoid re-subscribing on every render.
+ * This hook is optimized with a "latest ref" pattern, meaning it will NOT
+ * re-subscribe even if the `handler` function reference changes between renders.
+ * This makes it safe to use inline arrow functions without `useCallback`.
  *
  * ## Usage
  *
@@ -23,29 +25,39 @@ import { Observable } from 'rxjs';
  *   const vm = useViewModel(CheckoutViewModel);
  *   const { navigate } = useNavigation();
  *
- *   useEvent(
- *     vm.navigateTo$,
- *     useCallback((route) => navigate(route), [navigate]),
- *   );
- *
- *   useEvent(
- *     vm.showSnackbar$,
- *     useCallback((msg) => Snackbar.show({ text: msg }), []),
- *   );
+ *   // Safe to use inline functions — no re-subscription on re-render!
+ *   useEvent(vm.navigateTo$, (route) => {
+ *     navigate(route);
+ *   });
  *
  *   return <View>...</View>;
  * };
  * ```
  *
  * @param observable$ - The EventFlow observable (do NOT pass a StateFlow here)
- * @param handler - Side-effect callback — wrap in `useCallback` to keep it stable
+ * @param handler - Side-effect callback.
  */
 export function useEvent<T>(
   observable$: Observable<T>,
   handler: (value: T) => void,
 ): void {
+  // Use a ref to store the latest handler. This ensures that the subscription
+  // always calls the most recent version of the handler without needing
+  // to re-subscribe (which could cause missed events).
+  const handlerRef = useRef(handler);
+
+  // Update the ref on every render to the latest handler version.
   useEffect(() => {
-    const subscription = observable$.subscribe({ next: handler });
+    handlerRef.current = handler;
+  });
+
+  useEffect(() => {
+    const subscription = observable$.subscribe({
+      next: (value) => {
+        handlerRef.current(value);
+      },
+    });
+
     return () => subscription.unsubscribe();
-  }, [observable$, handler]);
+  }, [observable$]);
 }

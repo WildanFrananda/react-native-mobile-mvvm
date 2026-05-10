@@ -1,17 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 import { Observable, Subscription } from 'rxjs';
+import type { ReadOnlyStateFlow } from '../core/StateFlow';
 
 /**
- * useStream<T> — Subscribe to an RxJS Observable and sync it to React state.
+ * useStream<T> — Subscribe to an RxJS Observable or ReadOnlyStateFlow and sync it to React state.
  *
  * Direct analogies:
  * - `collectAsState()` in Jetpack Compose
  * - `StreamBuilder` in Flutter
  * - `.sink` + `@Published` in SwiftUI
  *
- * This hook only triggers a re-render when a **new value** is emitted by the
- * Observable, preventing unnecessary renders.
+ * This hook only triggers a re-render when a **new value** is emitted, preventing unnecessary renders.
  *
  * ## Usage
  *
@@ -21,7 +21,7 @@ import { Observable, Subscription } from 'rxjs';
  * const CounterScreen = () => {
  *   const viewModel = useViewModel(CounterViewModel);
  *
- *   // Auto-subscribes and auto-unsubscribes — no manual useEffect needed
+ *   // ✅ Direct pass — no need for .asObservable()
  *   const count = useStream(viewModel.count$, 0);
  *   const isLoading = useStream(viewModel.isLoading$, false);
  *
@@ -29,17 +29,28 @@ import { Observable, Subscription } from 'rxjs';
  * };
  * ```
  *
- * @param observable$ - The RxJS Observable to subscribe to
- * @param defaultValue - Initial value returned before the Observable emits for the first time
- * @returns The latest value emitted by the Observable, or `defaultValue` if not yet emitted
+ * @param source - The RxJS Observable or ReadOnlyStateFlow to subscribe to
+ * @param defaultValue - Initial value returned before the source emits for the first time
+ * @returns The latest value emitted by the source, or `defaultValue` if not yet emitted
  */
-export function useStream<T>(observable$: Observable<T>, defaultValue: T): T {
+export function useStream<T>(
+  source: Observable<T> | ReadOnlyStateFlow<T>,
+  defaultValue: T,
+): T {
+  const observable$ = 'asObservable' in source ? source.asObservable() : source;
+
   const [state, setState] = useState<T>(() => {
     // Eagerly read the current value on init to avoid a flicker render with defaultValue.
-    // BehaviorSubject (StateFlow) emits synchronously on subscribe, so this captures
-    // the current value before the first paint. Plain Observables fall back to defaultValue.
+    // If it's a ReadOnlyStateFlow, we can read the .value property directly.
+    if ('value' in source) {
+      return source.value;
+    }
+
+    // Otherwise, check if it's a BehaviorSubject (or similar) that emits synchronously.
     let current = defaultValue;
-    const sub = observable$.subscribe((v) => { current = v; });
+    const sub = observable$.subscribe((v) => {
+      current = v;
+    });
     sub.unsubscribe();
     return current;
   });
@@ -61,7 +72,7 @@ export function useStream<T>(observable$: Observable<T>, defaultValue: T): T {
     // state updates while UI is not visible and saves battery.
     const appStateSub = AppState.addEventListener('change', (nextState) => {
       if (nextState === 'active') {
-        subscribe(); // resubscribe — BehaviorSubject replays latest value immediately
+        subscribe(); // resubscribe — replays latest value immediately if it's a BehaviorSubject
       } else {
         subscriptionRef.current?.unsubscribe();
         subscriptionRef.current = null;

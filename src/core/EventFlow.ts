@@ -28,9 +28,10 @@ import { Observable, Subject } from 'rxjs';
  *
  * In the UI — use `useEvent`, NOT `useStream`:
  * ```tsx
- * useEvent(vm.navigateTo$, useCallback((route) => {
+ * // Safe to use inline functions — no re-subscription on re-render!
+ * useEvent(vm.navigateTo$, (route) => {
  *   navigation.navigate(route);
- * }, [navigation]));
+ * });
  * ```
  */
 export class EventFlow<T> {

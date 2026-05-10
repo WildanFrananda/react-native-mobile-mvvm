@@ -60,7 +60,7 @@ export function ViewModelScope({
   useEffect(() => {
     const store = storeRef.current;
     return () => {
-      store.forEach((vm) => vm.onCleared());
+      store.forEach((vm) => vm.clear());
       store.clear();
     };
   }, []);
@@ -83,17 +83,26 @@ export function ViewModelScope({
  *
  * **Must be used inside a `<ViewModelScope>`.** Throws if no scope is found.
  *
+ * ## Usage (Class resolution)
+ *
  * ```tsx
- * // Both screens get the same CheckoutViewModel instance
  * const vm = useScopedViewModel(CheckoutViewModel);
  * ```
  *
+ * ## Usage (Manual Factory)
+ *
+ * ```tsx
+ * const vm = useScopedViewModel(CheckoutViewModel, () => new CheckoutViewModel(api));
+ * ```
+ *
  * @param ViewModelClass - The ViewModel class to resolve from the scope
+ * @param factory - Optional factory function if manual instantiation is required
  * @returns The shared ViewModel instance for this scope
  * @throws If called outside of a `<ViewModelScope>`
  */
 export function useScopedViewModel<T extends ViewModel>(
   ViewModelClass: Constructor<T>,
+  factory?: () => T,
 ): T {
   const store = useContext(ViewModelScopeContext);
 
@@ -104,15 +113,15 @@ export function useScopedViewModel<T extends ViewModel>(
     );
   }
 
-  if (!store.has(ViewModelClass as Constructor<ViewModel>)) {
-    store.set(
-      ViewModelClass as Constructor<ViewModel>,
-      createViewModelInstance(ViewModelClass),
-    );
+  const key = ViewModelClass as Constructor<ViewModel>;
+
+  if (!store.has(key)) {
+    const instance = factory ? factory() : createViewModelInstance(ViewModelClass);
+    store.set(key, instance);
   }
 
   // Exposes the ViewModel class name in React DevTools (dev only)
   useDebugValue(ViewModelClass.name);
 
-  return store.get(ViewModelClass as Constructor<ViewModel>) as T;
+  return store.get(key) as T;
 }

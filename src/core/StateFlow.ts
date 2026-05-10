@@ -1,6 +1,22 @@
 import { BehaviorSubject, Observable } from 'rxjs';
 
 /**
+ * ReadOnlyStateFlow<T> — A read-only version of StateFlow.
+ * Allows synchronous access to the current value and observing changes via an Observable.
+ */
+export interface ReadOnlyStateFlow<T> {
+  /**
+   * Reads the current state value synchronously.
+   */
+  readonly value: T;
+
+  /**
+   * Exposes a read-only stream to the UI layer.
+   */
+  asObservable(): Observable<T>;
+}
+
+/**
  * StateFlow<T> — Reactive state wrapper built on top of RxJS BehaviorSubject.
  *
  * Direct analogies:
@@ -18,25 +34,15 @@ import { BehaviorSubject, Observable } from 'rxjs';
  *   private _count = new StateFlow<number>(0);
  *
  *   // Expose a read-only stream to the UI
- *   public readonly count$ = this._count.asObservable();
+ *   public readonly count$: ReadOnlyStateFlow<number> = this._count;
  *
  *   increment() {
  *     this._count.value += 1; // Safe mutation — UI re-renders automatically
  *   }
  * }
  * ```
- *
- * Custom equality — prevents re-renders when object identity changes but content is the same:
- * ```ts
- * // Only emits when user.id changes — not on every object reassignment
- * private _user = new StateFlow<User>(initial, (a, b) => a.id === b.id);
- *
- * // Deep equality via lodash (install separately)
- * import isEqual from 'lodash.isequal';
- * private _config = new StateFlow<Config>(initial, isEqual);
- * ```
  */
-export class StateFlow<T> {
+export class StateFlow<T> implements ReadOnlyStateFlow<T> {
   private readonly _subject: BehaviorSubject<T>;
   private readonly _isEqual: (a: T, b: T) => boolean;
 
@@ -67,10 +73,18 @@ export class StateFlow<T> {
   }
 
   /**
+   * Exposes the StateFlow as a read-only version.
+   * Analogous to `.asStateFlow()` in Kotlin.
+   */
+  asReadOnly(): ReadOnlyStateFlow<T> {
+    return this;
+  }
+
+  /**
    * Exposes a **read-only** stream to the UI layer.
    * The UI cannot call `.next()` directly — all mutations must go through the ViewModel.
    *
-   * Analogous to `.asStateFlow()` in Kotlin or the `stream` getter in Flutter.
+   * Analogous to the `stream` getter in Flutter.
    */
   asObservable(): Observable<T> {
     return this._subject.asObservable();

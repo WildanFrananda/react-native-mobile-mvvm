@@ -27,6 +27,7 @@ This package solves that by providing **8 core modules** that map directly to pa
 |---|---|---|---|
 | `ViewModel` | `ViewModel` + `viewModelScope` | `ChangeNotifier` + `dispose()` | `ObservableObject` |
 | `StateFlow<T>` | `MutableStateFlow<T>` | `BehaviorSubject` | `@Published` |
+| `ReadOnlyStateFlow<T>` | `StateFlow<T>` (read-only) | `ValueStream` (rxdart) | `@Published` (get only) |
 | `EventFlow<T>` | `SharedFlow(replay=0)` / `Channel` | `StreamController` one-shot | `PassthroughSubject` |
 | `ComputedStateFlow` | `derivedStateOf {}` | `combineLatest()` (RxDart) | `combine()` / Combine |
 | `UiState<T>` | `sealed class UiState` | `ConnectionState` / BLoC states | Enum-driven state |
@@ -91,13 +92,13 @@ Then enable decorator support in your **`tsconfig.json`**:
 
 ```ts
 // CounterViewModel.ts
-import { ViewModel, StateFlow } from 'react-native-mobile-mvvm';
+import { ViewModel, StateFlow, ReadOnlyStateFlow } from 'react-native-mobile-mvvm';
 
 export class CounterViewModel extends ViewModel {
   private _count = new StateFlow<number>(0);
 
-  // Expose a read-only stream to the UI
-  public readonly count$ = this._count.asObservable();
+  // ✅ Expose a read-only version — UI can't mutate, but can read .value
+  public readonly count$: ReadOnlyStateFlow<number> = this._count;
 
   increment() {
     this._count.value += 1;
@@ -120,7 +121,7 @@ const CounterScreen = () => {
   // Lifecycle is managed automatically — no useEffect, no cleanup boilerplate
   const vm = useViewModel(CounterViewModel);
 
-  // Subscribes automatically, unsubscribes on unmount
+  // ✅ Pass the state object directly — no need for .asObservable()
   const count = useStream(vm.count$, 0);
 
   return (
@@ -148,8 +149,8 @@ import { ViewModel } from 'react-native-mobile-mvvm';
 
 export class MyViewModel extends ViewModel {
   override onCleared() {
-    super.onCleared(); // always call super
     // your custom cleanup here
+    // Framework handles core cleanup (Aborting requests, completing destroy$)
   }
 }
 ```
@@ -158,31 +159,31 @@ export class MyViewModel extends ViewModel {
 
 | Member | Type | Description |
 |---|---|---|
-| `destroy$` | `Observable<void>` | Emits once when the component unmounts. Use with `takeUntil(this.destroy$)` to auto-cancel RxJS subscriptions. |
-| `abortController` | `AbortController` | Pass `this.abortController.signal` to `fetch()` to cancel in-flight requests on unmount. |
+| `destroy$` | `Observable<void>` | Emits once when the ViewModel is cleared. Use with `takeUntil(this.destroy$)` to auto-cancel RxJS subscriptions. |
+| `abortController` | `AbortController` | Signal is automatically triggered on clear to cancel in-flight requests. |
 
 #### Methods
 
 | Method | Description |
 |---|---|
-| `onCleared()` | Called automatically on unmount. Override for custom cleanup. Always call `super.onCleared()`. |
+| `launch(task)` | Runs an async task with an `AbortSignal` that is automatically triggered on clear. |
+| `onCleared()` | Called automatically on unmount. Override for custom cleanup. |
+| `reactTo(source, ms, fn)` | React to state changes with debounce and automatic cancellation. |
 
-**Example — cancelling a fetch request:**
+**Example — using `launch` for automatic cancellation:**
 
 ```ts
 export class UserViewModel extends ViewModel {
   private _user = new StateFlow<User | null>(null);
-  public readonly user$ = this._user.asObservable();
+  // ✅ Expose as ReadOnlyStateFlow — provides .value property
+  public readonly user$: ReadOnlyStateFlow<User | null> = this._user;
 
   async fetchUser(id: string) {
-    try {
-      const res = await fetch(`/api/users/${id}`, {
-        signal: this.abortController.signal, // auto-cancelled on unmount
-      });
+    // ✅ launch provides automatic cancellation on unmount
+    this.launch(async (signal) => {
+      const res = await fetch(`/api/users/${id}`, { signal });
       this._user.value = await res.json();
-    } catch (e) {
-      if ((e as Error).name !== 'AbortError') throw e;
-    }
+    });
   }
 }
 ```
@@ -195,12 +196,12 @@ import { takeUntil } from 'rxjs/operators';
 
 export class TimerViewModel extends ViewModel {
   private _tick = new StateFlow<number>(0);
-  public readonly tick$ = this._tick.asObservable();
+  public readonly tick$ = this._tick.asReadOnly();
 
   constructor() {
     super();
     interval(1000)
-      .pipe(takeUntil(this.destroy$)) // stops automatically on unmount
+      .pipe(takeUntil(this.destroy$)) // stops automatically on clear
       .subscribe((n) => (this._tick.value = n));
   }
 }
@@ -208,100 +209,51 @@ export class TimerViewModel extends ViewModel {
 
 ---
 
-### `StateFlow<T>`
+### `StateFlow<T>` & `ReadOnlyStateFlow<T>`
 
-A reactive state container backed by RxJS `BehaviorSubject`. Analogous to `MutableStateFlow<T>` in Kotlin.
+A reactive state container. Analogous to `MutableStateFlow<T>` and `StateFlow<T>` in Kotlin.
 
 ```ts
 const _count = new StateFlow<number>(0);
 
 _count.value;           // Read current value synchronously
 _count.value = 42;      // Mutate — all subscribers are notified
-_count.asObservable();  // Expose a read-only stream to the UI
+_count.asReadOnly();    // Returns ReadOnlyStateFlow<T>
 ```
 
-#### Constructor
+#### `ReadOnlyStateFlow<T>`
+
+Exposes the current value and an Observable for updates. Derived states from `ComputedStateFlow` also implement this.
+
+```ts
+interface ReadOnlyStateFlow<T> {
+  readonly value: T;           // Synchronous access
+  asObservable(): Observable<T>; // Observe updates
+}
+```
+
+#### `StateFlow` Constructor
 
 | Parameter | Type | Description |
 |---|---|---|
 | `initialValue` | `T` | The starting value of the state. |
-| `isEqual` | `(a: T, b: T) => boolean` | Optional. Equality check — skips emit if returns `true`. Default: `Object.is` (reference equality). |
-
-Like Kotlin's `StateFlow`, value setter only emits when the value actually changes. For primitive types, this works out of the box. For objects, provide a custom equality function:
-
-```ts
-// Default — reference equality (Object.is). Primitives deduplicated automatically.
-private _count = new StateFlow<number>(0);
-this._count.value = 5;
-this._count.value = 5; // no emit — same value
-
-// Custom equality — deduplicate by id, not reference
-private _user = new StateFlow<User>(initial, (a, b) => a.id === b.id);
-
-// Deep equality — install lodash separately
-import isEqual from 'lodash.isequal';
-private _config = new StateFlow<Config>(initial, isEqual);
-```
-
-#### Members
-
-| Member | Type | Description |
-|---|---|---|
-| `value` | `T` (get/set) | Read or write the current state synchronously. |
-| `asObservable()` | `Observable<T>` | Returns a read-only stream. The UI cannot call `.next()` directly. |
-
-**Recommended pattern — keep mutation inside the ViewModel:**
-
-```ts
-export class FormViewModel extends ViewModel {
-  // Private & mutable — only the ViewModel can mutate this
-  private _email = new StateFlow<string>('');
-  private _isValid = new StateFlow<boolean>(false);
-
-  // Public & read-only — the UI observes these
-  public readonly email$ = this._email.asObservable();
-  public readonly isValid$ = this._isValid.asObservable();
-
-  onEmailChanged(value: string) {
-    this._email.value = value;
-    this._isValid.value = value.includes('@');
-  }
-}
-```
+| `isEqual` | `(a: T, b: T) => boolean` | Optional. Equality check — skips emit if returns `true`. Default: `Object.is`. |
 
 ---
 
-### `useViewModel<T>(ViewModelClass)`
+### `useStream<T>(source, defaultValue)`
 
-Creates and binds a ViewModel to the React component lifecycle.
-
-```ts
-const vm = useViewModel(MyViewModel);
-```
-
-| Parameter | Type | Description |
-|---|---|---|
-| `ViewModelClass` | `Constructor<T extends ViewModel>` | The ViewModel **class** (not an instance). |
-
-**Behaviour:**
-- Creates the instance **once** on mount (never recreates on re-render).
-- Resolves dependencies from the DI container if `@Injectable()` is present.
-- Calls `viewModel.onCleared()` automatically on unmount.
-
----
-
-### `useStream<T>(observable$, defaultValue)`
-
-Subscribes to an RxJS `Observable` and returns its latest value as React state.
+Subscribes to an `Observable` or `ReadOnlyStateFlow` and returns its latest value as React state.
 
 ```ts
+// ✅ Pass the state object directly
 const count = useStream(vm.count$, 0);
 ```
 
 | Parameter | Type | Description |
 |---|---|---|
-| `observable$` | `Observable<T>` | The RxJS stream to subscribe to. |
-| `defaultValue` | `T` | Returned before the first emission. |
+| `source` | `Observable<T> \| ReadOnlyStateFlow<T>` | The source to subscribe to. |
+| `defaultValue` | `T` | Returned if source hasn't emitted (only for raw Observables). |
 
 **Behaviour:**
 - Subscribes on mount, unsubscribes on unmount.
@@ -450,7 +402,6 @@ Analogous to `BlocListener` in Flutter or `LaunchedEffect` + `collectLatest` in 
 
 ```tsx
 // CheckoutScreen.tsx
-import { useCallback } from 'react';
 import { useViewModel, useStream, useEvent } from 'react-native-mobile-mvvm';
 import { useNavigation } from '@react-navigation/native';
 import { CheckoutViewModel } from './CheckoutViewModel';
@@ -462,21 +413,15 @@ const CheckoutScreen = () => {
   // State — renders when isLoading changes
   const isLoading = useStream(vm.isLoading$, false);
 
-  // Events — side effects only, no re-render
-  useEvent(
-    vm.navigateTo$,
-    useCallback((route) => {
-      navigation.navigate(route as never);
-    }, [navigation]),
-  );
+  // ✅ Events — optimized with "latest ref" pattern.
+  // Safe to use inline functions — NO re-subscription on re-render!
+  useEvent(vm.navigateTo$, (route) => {
+    navigation.navigate(route as never);
+  });
 
-  useEvent(
-    vm.showSnackbar$,
-    useCallback((message) => {
-      // Your snackbar library of choice
-      Snackbar.show({ text: message, duration: Snackbar.LENGTH_SHORT });
-    }, []),
-  );
+  useEvent(vm.showSnackbar$, (message) => {
+    Snackbar.show({ text: message, duration: Snackbar.LENGTH_SHORT });
+  });
 
   return (
     <View>
@@ -490,73 +435,51 @@ const CheckoutScreen = () => {
 };
 ```
 
-> **Tip:** Always wrap `handler` in `useCallback`. An unstable function reference causes `useEvent` to re-subscribe on every render.
-
 #### Parameters
 
 | Parameter | Type | Description |
 |---|---|---|
 | `observable$` | `Observable<T>` | The EventFlow observable to listen to. |
-| `handler` | `(value: T) => void` | Side-effect callback. Wrap in `useCallback` to keep it stable. |
+| `handler` | `(value: T) => void` | Side-effect callback. Safe to use inline arrow functions. |
 
 **Behaviour:**
 - Does NOT store the value in React state — no re-render.
 - Subscribes on mount, unsubscribes on unmount.
-- Re-subscribes if `observable$` or `handler` reference changes.
+- Optimized: Does NOT re-subscribe when the `handler` reference changes.
 
 ---
 
 ### `ComputedStateFlow`
 
-Derives a new `Observable` from one or more `StateFlow` instances. Sugar over `combineLatest + map` — no need to call `.asObservable()` on each source or import RxJS operators manually.
+Derives a new `ReadOnlyStateFlow` from one or more `StateFlow` instances. Sugar over `combineLatest + map`.
 
 Analogous to `derivedStateOf {}` in Compose, `combine()` in Swift/Combine, and `combineLatest()` in RxDart/Flutter.
 
 ```ts
-// ❌ Before — verbose, requires RxJS knowledge
-public readonly filteredList$ = combineLatest([
-  this._items.asObservable(),
-  this._query.asObservable(),
-]).pipe(
-  map(([items, query]) => items.filter((i) => i.name.includes(query))),
-  takeUntil(this.destroy$),
-);
-
-// ✅ After — reads like derivedStateOf in Compose
-public readonly filteredList$ = ComputedStateFlow.from(
+// ✅ Derived — updates automatically and provides .value
+public readonly filteredList$: ReadOnlyStateFlow<Product[]> = ComputedStateFlow.from(
   [this._items, this._query],
   ([items, query]) => items.filter((i) => i.name.includes(query)),
 );
+
+// Access synchronously in the ViewModel
+get results() { return this.filteredList$.value; }
 ```
 
 **Full example — multiple sources, multiple derived states:**
 
 ```ts
 // ProductListViewModel.ts
-import { ViewModel, StateFlow, ComputedStateFlow } from 'react-native-mobile-mvvm';
-
-interface Product {
-  id: string;
-  name: string;
-  price: number;
-  inStock: boolean;
-}
+import { ViewModel, StateFlow, ComputedStateFlow, ReadOnlyStateFlow } from 'react-native-mobile-mvvm';
 
 export class ProductListViewModel extends ViewModel {
   private _products = new StateFlow<Product[]>([]);
   private _searchQuery = new StateFlow<string>('');
-  private _showInStockOnly = new StateFlow<boolean>(false);
-
-  public readonly searchQuery$ = this._searchQuery.asObservable();
-  public readonly showInStockOnly$ = this._showInStockOnly.asObservable();
 
   // Derived — recomputes automatically when any source changes
-  public readonly filteredProducts$ = ComputedStateFlow.from(
-    [this._products, this._searchQuery, this._showInStockOnly],
-    ([products, query, inStockOnly]) =>
-      products
-        .filter((p) => p.name.toLowerCase().includes(query.toLowerCase()))
-        .filter((p) => (inStockOnly ? p.inStock : true)),
+  public readonly filteredProducts$: ReadOnlyStateFlow<Product[]> = ComputedStateFlow.from(
+    [this._products, this._searchQuery],
+    ([products, query]) => products.filter((p) => p.name.includes(query)),
   );
 
   // Single-source derived state
@@ -564,48 +487,18 @@ export class ProductListViewModel extends ViewModel {
     [this._products],
     ([products]) => products.length,
   );
-
-  onSearchChanged(query: string) {
-    this._searchQuery.value = query;
-  }
-
-  toggleInStockFilter() {
-    this._showInStockOnly.value = !this._showInStockOnly.value;
-  }
 }
 ```
 
 ```tsx
 // ProductListScreen.tsx
-import { useViewModel, useStream } from 'react-native-mobile-mvvm';
-import { ProductListViewModel } from './ProductListViewModel';
-
 const ProductListScreen = () => {
   const vm = useViewModel(ProductListViewModel);
 
-  // These re-render automatically when _products, _searchQuery, or _showInStockOnly changes
+  // ✅ Pass derived states directly — no need for .asObservable()
   const products = useStream(vm.filteredProducts$, []);
   const resultCount = useStream(vm.resultCount$, 0);
-  const showInStockOnly = useStream(vm.showInStockOnly$, false);
-
-  return (
-    <View>
-      <TextInput
-        placeholder="Search..."
-        onChangeText={(t) => vm.onSearchChanged(t)}
-      />
-      <Button
-        title={showInStockOnly ? 'In Stock Only ✓' : 'Show All'}
-        onPress={() => vm.toggleInStockFilter()}
-      />
-      <Text>{resultCount} products found</Text>
-      <FlatList
-        data={products}
-        keyExtractor={(item) => item.id}
-        renderItem={({ item }) => <Text>{item.name}</Text>}
-      />
-    </View>
-  );
+  // ...
 };
 ```
 
@@ -613,16 +506,14 @@ const ProductListScreen = () => {
 
 | | Description |
 |---|---|
-| `ComputedStateFlow.from(sources, compute)` | Creates a derived Observable from an array of StateFlow instances |
+| `ComputedStateFlow.from(sources, compute)` | Creates a derived ReadOnlyStateFlow from an array of StateFlow instances |
 
 | Parameter | Type | Description |
 |---|---|---|
 | `sources` | `StateFlow<T>[]` | One or more StateFlow instances to observe |
 | `compute` | `(values: T[]) => R` | Pure function that derives the new value. Receives current values of all sources as a typed tuple. |
 
-**Returns:** `Observable<R>` — use `useStream(vm.derived$, defaultValue)` to consume in the UI.
-
-> **Note:** `ComputedStateFlow.from()` emits immediately on subscribe because `StateFlow` is backed by `BehaviorSubject`. The first render will already have the correct derived value — no flicker.
+**Returns:** `ReadOnlyStateFlow<R>`
 
 ---
 
@@ -632,40 +523,25 @@ A sealed state type for async operations. Replaces the anti-pattern of three sep
 
 Analogous to `sealed class UiState` in Kotlin/Compose and `AsyncSnapshot` + `ConnectionState` in Flutter.
 
-**In the ViewModel — factory helpers mirror Kotlin sealed class constructors:**
+**In the ViewModel:**
 
 ```ts
-// UserViewModel.ts
-import { ViewModel, StateFlow, UiState } from 'react-native-mobile-mvvm';
-
-interface User {
-  id: string;
-  name: string;
-  email: string;
-}
-
 export class UserViewModel extends ViewModel {
-  // ❌ Anti-pattern — three fragmented StateFlows
-  // private _isLoading = new StateFlow<boolean>(false);
-  // private _user = new StateFlow<User | null>(null);
-  // private _error = new StateFlow<string | null>(null);
-
-  // ✅ One source of truth — mutually exclusive states
+  // ✅ One source of truth
   private _userState = new StateFlow<UiState<User>>(UiState.idle());
-  public readonly userState$ = this._userState.asObservable();
+  public readonly userState$: ReadOnlyStateFlow<UiState<User>> = this._userState;
 
   async fetchUser(id: string) {
     this._userState.value = UiState.loading();
     try {
-      const res = await fetch(`/api/users/${id}`, {
-        signal: this.abortController.signal,
+      // ✅ launch provides automatic cancellation on unmount
+      await this.launch(async (signal) => {
+        const res = await fetch(`/api/users/${id}`, { signal });
+        const user = await res.json();
+        this._userState.value = UiState.success(user);
       });
-      const user: User = await res.json();
-      this._userState.value = UiState.success(user);
     } catch (e) {
-      if ((e as Error).name !== 'AbortError') {
-        this._userState.value = UiState.error((e as Error).message);
-      }
+      this._userState.value = UiState.error((e as Error).message);
     }
   }
 }
@@ -674,41 +550,14 @@ export class UserViewModel extends ViewModel {
 **In the UI — `useUiState` destructures into readable booleans:**
 
 ```tsx
-// UserScreen.tsx
-import { useViewModel, useUiState } from 'react-native-mobile-mvvm';
-import { UserViewModel } from './UserViewModel';
-
 const UserScreen = () => {
   const vm = useViewModel(UserViewModel);
 
-  // Analogous to collectAsState() + when(state) in Compose
-  // or AsyncSnapshot fields (hasData, hasError) in Flutter
+  // ✅ Pass the state object directly
   const { data, isLoading, isError, error, isIdle } = useUiState(vm.userState$);
 
-  if (isIdle) {
-    return <Button title="Load Profile" onPress={() => vm.fetchUser('123')} />;
-  }
-
-  if (isLoading) {
-    return <ActivityIndicator size="large" />;
-  }
-
-  if (isError) {
-    return (
-      <View>
-        <Text style={{ color: 'red' }}>{error}</Text>
-        <Button title="Retry" onPress={() => vm.fetchUser('123')} />
-      </View>
-    );
-  }
-
-  // TypeScript knows data is non-null here because isError/isLoading/isIdle are false
-  return (
-    <View>
-      <Text style={{ fontSize: 24 }}>{data!.name}</Text>
-      <Text>{data!.email}</Text>
-    </View>
-  );
+  if (isLoading) return <ActivityIndicator />;
+  // ...
 };
 ```
 
@@ -791,8 +640,12 @@ import { useScopedViewModel, useUiState } from 'react-native-mobile-mvvm';
 import { CheckoutViewModel } from './CheckoutViewModel';
 
 const CartScreen = () => {
-  // Same instance as CheckoutScreen and PaymentScreen
+  // ✅ Resolved via Class (DI or no-arg constructor)
   const vm = useScopedViewModel(CheckoutViewModel);
+  
+  // OR: ✅ Manual instantiation with arguments
+  const vmManual = useScopedViewModel(CheckoutViewModel, () => new CheckoutViewModel(api));
+
   const { data: cart, isLoading } = useUiState(vm.cartState$);
 
   return (
@@ -820,95 +673,76 @@ const CheckoutScreen = () => {
 
 ## Dependency Injection
 
-The DI module is optional and lives in a separate sub-entry point to keep the core bundle lean.
+This package provides a flexible DI system that is **truly optional**. You can choose between automated resolution using decorators (powered by [tsyringe](https://github.com/microsoft/tsyringe)) or manual injection using factory functions.
 
-### Setup — call once at the app entry point
+### 1. Manual Injection (No setup required)
 
-```ts
-// App.tsx or index.ts — must be the very first import
-import 'reflect-metadata';
+If you want to avoid decorators and `reflect-metadata`, simply pass a factory function to `useViewModel`. This is the easiest way to pass arguments (like a `userId` from props) to your ViewModel.
 
-import { configureDI } from 'react-native-mobile-mvvm/di';
-import { container } from 'tsyringe';
-
-import { AuthRepositoryImpl } from './data/AuthRepositoryImpl';
-import { ApiService } from './data/ApiService';
-
-configureDI(() => {
-  container.register('AuthRepository', { useClass: AuthRepositoryImpl });
-  container.registerSingleton('ApiService', ApiService);
-});
+```tsx
+const UserScreen = ({ userId }: Props) => {
+  // ✅ Manual instantiation — no decorators or DI container needed
+  const vm = useViewModel(() => new UserViewModel(userId, myApiService));
+  
+  // ...
+};
 ```
 
-### Define an injectable ViewModel
+### 2. Automated DI (using tsyringe)
 
-```ts
-// LoginViewModel.ts
-import { ViewModel, StateFlow } from 'react-native-mobile-mvvm';
-import { Injectable, Inject } from 'react-native-mobile-mvvm/di';
-import type { AuthRepository } from '../domain/AuthRepository';
+For larger applications, you can use the built-in DI support. This requires installing additional peer dependencies:
 
-@Injectable()
-export class LoginViewModel extends ViewModel {
-  private _isLoading = new StateFlow<boolean>(false);
-  private _error = new StateFlow<string | null>(null);
+```bash
+npm install tsyringe reflect-metadata
+```
 
-  public readonly isLoading$ = this._isLoading.asObservable();
-  public readonly error$ = this._error.asObservable();
+And enabling decorator support in your **`tsconfig.json`**:
 
-  constructor(
-    @Inject('AuthRepository') private authRepo: AuthRepository,
-  ) {
-    super();
-  }
-
-  async login(email: string, password: string) {
-    this._isLoading.value = true;
-    this._error.value = null;
-    try {
-      await this.authRepo.login(email, password, {
-        signal: this.abortController.signal,
-      });
-    } catch (e) {
-      if ((e as Error).name !== 'AbortError') {
-        this._error.value = (e as Error).message;
-      }
-    } finally {
-      this._isLoading.value = false;
-    }
-  }
-
-  override onCleared() {
-    super.onCleared();
-    console.log('LoginViewModel cleared');
+```json
+{
+  "compilerOptions": {
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true
   }
 }
 ```
 
-### Use in a screen
+#### Setup — call once at the app entry point
+
+```ts
+// App.tsx — MUST be the first import
+import 'reflect-metadata';
+import { configureDI, container } from 'react-native-mobile-mvvm/di';
+
+configureDI(() => {
+  container.register('AuthRepo', { useClass: AuthRepoImpl });
+});
+```
+
+#### Define an injectable ViewModel
+
+```ts
+import { ViewModel, StateFlow } from 'react-native-mobile-mvvm';
+import { Injectable, Inject } from 'react-native-mobile-mvvm/di';
+
+@Injectable()
+export class LoginViewModel extends ViewModel {
+  constructor(
+    @Inject('AuthRepo') private authRepo: AuthRepo,
+  ) {
+    super();
+  }
+  // ...
+}
+```
+
+#### Use in a screen
 
 ```tsx
-// LoginScreen.tsx
-import { useViewModel, useStream } from 'react-native-mobile-mvvm';
-import { LoginViewModel } from './LoginViewModel';
-
 const LoginScreen = () => {
-  const vm = useViewModel(LoginViewModel); // AuthRepository is auto-injected
-
-  const isLoading = useStream(vm.isLoading$, false);
-  const error = useStream(vm.error$, null);
-
-  return (
-    <View>
-      {error && <Text style={{ color: 'red' }}>{error}</Text>}
-      <TextInput onChangeText={(t) => { /* ... */ }} />
-      <Button
-        title={isLoading ? 'Logging in...' : 'Login'}
-        disabled={isLoading}
-        onPress={() => vm.login('user@example.com', 'secret')}
-      />
-    </View>
-  );
+  // ✅ Auto-resolved — dependencies are injected automatically
+  const vm = useViewModel(LoginViewModel);
+  // ...
 };
 ```
 

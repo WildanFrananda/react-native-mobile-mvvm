@@ -1,6 +1,7 @@
 import { Observable } from 'rxjs';
 import type { UiState } from '../core/UiState';
 import { useStream } from './useStream';
+import type { ReadOnlyStateFlow } from '../core/StateFlow';
 
 /**
  * Return shape of useUiState — destructurable, analogous to:
@@ -26,7 +27,7 @@ export interface UiStateResult<T> {
 }
 
 /**
- * useUiState<T> — Subscribes to a UiState Observable and returns a destructurable result.
+ * useUiState<T> — Subscribes to a UiState source and returns a destructurable result.
  *
  * Direct analogies:
  * - `when (uiState) { is Loading -> ... is Success -> ... }` in Compose
@@ -40,6 +41,8 @@ export interface UiStateResult<T> {
  *
  * const UserScreen = () => {
  *   const vm = useViewModel(UserViewModel);
+ *
+ *   // ✅ Direct pass — no need for .asObservable()
  *   const { data, isLoading, isError, error } = useUiState(vm.userState$);
  *
  *   if (isLoading) return <ActivityIndicator />;
@@ -50,29 +53,15 @@ export interface UiStateResult<T> {
  * };
  * ```
  *
- * ## Pattern matching on raw state
- *
- * ```tsx
- * const { state } = useUiState(vm.userState$);
- *
- * // Exhaustive switch — TypeScript narrows the type per branch
- * switch (state.status) {
- *   case 'idle':    return <Text>Tap to load</Text>;
- *   case 'loading': return <ActivityIndicator />;
- *   case 'success': return <Text>{state.data.name}</Text>; // state.data is typed T here
- *   case 'error':   return <Text>{state.message}</Text>;
- * }
- * ```
- *
- * @param observable$ - A StateFlow observable that emits UiState<T> values
+ * @param source - A ReadOnlyStateFlow or Observable that emits UiState<T> values
  * @param initialState - Initial state before the first emission (default: idle)
  * @returns Destructurable UiStateResult<T>
  */
 export function useUiState<T>(
-  observable$: Observable<UiState<T>>,
+  source: ReadOnlyStateFlow<UiState<T>> | Observable<UiState<T>>,
   initialState: UiState<T> = { status: 'idle' },
 ): UiStateResult<T> {
-  const state = useStream(observable$, initialState);
+  const state = useStream(source, initialState);
 
   return {
     state,
