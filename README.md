@@ -34,6 +34,8 @@ This package solves that by providing **8 core modules** that map directly to pa
 | `useStream()` | `collectAsState()` | `StreamBuilder` | `.sink` + `@Published` |
 | `useEvent()` | `LaunchedEffect` + `SharedFlow` | `BlocListener` | `.onReceive` |
 | `useUiState()` | `when (state) { is Loading }` | `AsyncSnapshot` fields | `switch state { }` |
+| `ViewModelScope` | Nav graph scope | `MultiProvider` / `InheritedWidget` | `@EnvironmentObject` |
+| `useScopedViewModel()` | `hiltViewModel(navBackStackEntry)` | `context.read<T>()` at scope level | `@EnvironmentObject` |
 | `@Injectable` | `@HiltViewModel` | `@injectable` (GetIt) | — |
 
 ### StateFlow vs EventFlow — When to use which
@@ -647,6 +649,76 @@ switch (state.status) {
 | `isSuccess` | `boolean` | True when `status === 'success'` |
 | `isError` | `boolean` | True when `status === 'error'` |
 | `error` | `string \| null` | Error message when `status === 'error'`, null otherwise |
+
+---
+
+### `ViewModelScope` + `useScopedViewModel()`
+
+Share a single ViewModel instance across multiple screens or components. The instance lives as long as the `<ViewModelScope>` is mounted — not tied to any individual component lifecycle.
+
+Analogous to `hiltViewModel(navBackStackEntry)` in Compose, `MultiProvider` scope in Flutter, and `@EnvironmentObject` in SwiftUI.
+
+**`useViewModel` vs `useScopedViewModel`:**
+
+| | `useViewModel` | `useScopedViewModel` |
+|---|---|---|
+| Instance | New per component | Shared within scope |
+| Lifetime | Component lifetime | Scope lifetime |
+| Use case | Screen-local state | Cross-screen shared state |
+| Cleanup | On component unmount | On scope unmount |
+
+**Step 1 — wrap a navigator or screen group with `<ViewModelScope>`:**
+
+```tsx
+// AppNavigator.tsx
+import { ViewModelScope } from 'react-native-mobile-mvvm';
+
+export const CheckoutNavigator = () => (
+  // All screens inside share the same CheckoutViewModel instance
+  <ViewModelScope>
+    <Stack.Navigator>
+      <Stack.Screen name="Cart" component={CartScreen} />
+      <Stack.Screen name="Checkout" component={CheckoutScreen} />
+      <Stack.Screen name="Payment" component={PaymentScreen} />
+    </Stack.Navigator>
+  </ViewModelScope>
+);
+// When the user navigates away from the checkout flow entirely,
+// ViewModelScope unmounts → CheckoutViewModel.onCleared() is called automatically.
+```
+
+**Step 2 — call `useScopedViewModel` in any screen inside the scope:**
+
+```tsx
+// CartScreen.tsx
+import { useScopedViewModel, useUiState } from 'react-native-mobile-mvvm';
+import { CheckoutViewModel } from './CheckoutViewModel';
+
+const CartScreen = () => {
+  // Same instance as CheckoutScreen and PaymentScreen
+  const vm = useScopedViewModel(CheckoutViewModel);
+  const { data: cart, isLoading } = useUiState(vm.cartState$);
+
+  return (
+    <View>
+      {isLoading && <ActivityIndicator />}
+      {cart && <CartList items={cart.items} />}
+      <Button title="Proceed to Checkout" onPress={() => vm.validateCart()} />
+    </View>
+  );
+};
+
+// CheckoutScreen.tsx — receives the SAME CheckoutViewModel instance
+const CheckoutScreen = () => {
+  const vm = useScopedViewModel(CheckoutViewModel);
+  // vm.cartState$ already has the validated cart from CartScreen — no reload needed
+  const { data: cart } = useUiState(vm.cartState$);
+
+  return <Text>Total: ${cart?.total}</Text>;
+};
+```
+
+> **Note:** `useScopedViewModel` throws if called outside a `<ViewModelScope>`. For per-screen ViewModels that don't need sharing, keep using `useViewModel`.
 
 ---
 

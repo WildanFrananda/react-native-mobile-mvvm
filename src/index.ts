@@ -58,5 +58,8 @@ export { useEvent } from './hooks/useEvent';
 export { useUiState } from './hooks/useUiState';
 export type { UiStateResult } from './hooks/useUiState';
 
+// Scoping — Shared ViewModels across components
+export { ViewModelScope, useScopedViewModel } from './scope/ViewModelScope';
+
 // Types
 export type { Constructor, InjectionToken } from './types';
