@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useRef } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useDebugValue } from 'react';
 import type { ViewModel } from '../core/ViewModel';
 import { createViewModelInstance } from '../di/container';
 import type { Constructor } from '../types';
@@ -110,6 +110,9 @@ export function useScopedViewModel<T extends ViewModel>(
       createViewModelInstance(ViewModelClass),
     );
   }
+
+  // Exposes the ViewModel class name in React DevTools (dev only)
+  useDebugValue(ViewModelClass.name);
 
   return store.get(ViewModelClass as Constructor<ViewModel>) as T;
 }

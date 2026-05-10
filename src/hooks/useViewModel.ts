@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useDebugValue, useEffect, useRef } from 'react';
 import type { ViewModel } from '../core/ViewModel';
 import { createViewModelInstance } from '../di/container';
 import type { Constructor } from '../types';
@@ -69,6 +69,11 @@ export function useViewModel<T extends ViewModel>(
     // Attempts DI container resolution first, falls back to new ClassName().
     viewModelRef.current = createViewModelInstance(ViewModelClass);
   }
+
+  // Exposes the ViewModel class name in React DevTools.
+  // Instead of a generic "useViewModel", DevTools will show e.g. "useViewModel: LoginViewModel".
+  // This is a dev-only hint — zero cost in production builds.
+  useDebugValue(ViewModelClass.name);
 
   useEffect(() => {
     // No setup is needed on mount.
