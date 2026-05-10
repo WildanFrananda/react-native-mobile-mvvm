@@ -33,18 +33,23 @@ import { Observable } from 'rxjs';
  * @returns The latest value emitted by the Observable, or `defaultValue` if not yet emitted
  */
 export function useStream<T>(observable$: Observable<T>, defaultValue: T): T {
-  const [state, setState] = useState<T>(defaultValue);
+  const [state, setState] = useState<T>(() => {
+    // Eagerly read the current value on init to avoid a flicker render with defaultValue.
+    // BehaviorSubject (StateFlow) emits synchronously on subscribe, so this captures
+    // the current value before the first paint. Plain Observables fall back to defaultValue.
+    let current = defaultValue;
+    const sub = observable$.subscribe((v) => {
+      current = v;
+    });
+    sub.unsubscribe();
+    return current;
+  });
 
   useEffect(() => {
-    // Subscribe to the observable — analogous to StreamBuilder.builder() in Flutter
     const subscription = observable$.subscribe({
       next: (value) => setState(value),
-      // Error handling is intentionally omitted here — it is the ViewModel's
-      // responsibility to expose errors via a dedicated StateFlow<Error | null>.
     });
 
-    // Automatic cleanup when the component unmounts or the observable reference changes.
-    // Analogous to StreamBuilder automatically cancelling when the Widget is disposed.
     return () => {
       subscription.unsubscribe();
     };

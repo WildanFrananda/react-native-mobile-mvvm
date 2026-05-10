@@ -21,15 +21,26 @@ Clean lifecycle management, reactive state, and dependency injection — all in 
 
 React Native lacks an opinionated architecture standard. Teams coming from Android or Flutter are forced to learn a completely different mental model — hooks, context, and global stores — from scratch.
 
-This package solves that by providing **4 core modules** that map directly to patterns you already know:
+This package solves that by providing **6 core modules** that map directly to patterns you already know:
 
-| This Package | Android/Compose | Flutter |
+| This Package | Android/Compose | Flutter | SwiftUI |
+|---|---|---|---|
+| `ViewModel` | `ViewModel` + `viewModelScope` | `ChangeNotifier` + `dispose()` | `ObservableObject` |
+| `StateFlow<T>` | `MutableStateFlow<T>` | `BehaviorSubject` | `@Published` |
+| `EventFlow<T>` | `SharedFlow(replay=0)` / `Channel` | `StreamController` one-shot | `PassthroughSubject` |
+| `useViewModel()` | `hiltViewModel()` | `context.watch<T>()` | `@StateObject` |
+| `useStream()` | `collectAsState()` | `StreamBuilder` | `.sink` + `@Published` |
+| `useEvent()` | `LaunchedEffect` + `SharedFlow` | `BlocListener` | `.onReceive` |
+| `@Injectable` | `@HiltViewModel` | `@injectable` (GetIt) | — |
+
+### StateFlow vs EventFlow — When to use which
+
+| | `StateFlow<T>` | `EventFlow<T>` |
 |---|---|---|
-| `ViewModel` | `ViewModel` + `viewModelScope` | `ChangeNotifier` + `dispose()` |
-| `StateFlow<T>` | `MutableStateFlow<T>` | `BehaviorSubject` / `StreamController` |
-| `useViewModel()` | `hiltViewModel()` | `context.watch<T>()` |
-| `useStream()` | `collectAsState()` | `StreamBuilder` |
-| `@Injectable` | `@HiltViewModel` | `@injectable` (GetIt) |
+| **Purpose** | UI state | One-shot side effects |
+| **Replay** | Yes — new subscribers get the last value | No — emit once, done |
+| **Examples** | `isLoading`, `user`, `formData` | Navigation, snackbar, dialog |
+| **Hook** | `useStream()` | `useEvent()` |
 
 ---
 
@@ -272,6 +283,125 @@ const count = useStream(vm.count$, 0);
 - Subscribes on mount, unsubscribes on unmount.
 - Re-subscribes if the `observable$` reference changes.
 - Only triggers a re-render when the value actually changes.
+- For `StateFlow` (BehaviorSubject), reads the current value synchronously on first render — no flicker with `defaultValue`.
+
+---
+
+### `EventFlow<T>`
+
+A fire-and-forget event stream. Does **not** replay to new subscribers — emit once, done.  
+Analogous to `SharedFlow(replay=0)` / `Channel` in Kotlin, or `StreamController` one-shot in Flutter.
+
+Use `EventFlow` for one-time side effects: **navigation, snackbars, dialogs, toasts**.  
+Use `StateFlow` for anything the UI needs to display.
+
+```ts
+// CheckoutViewModel.ts
+import { ViewModel, StateFlow, EventFlow } from 'react-native-mobile-mvvm';
+
+export class CheckoutViewModel extends ViewModel {
+  // State — useStream() reads this
+  private _isLoading = new StateFlow<boolean>(false);
+  public readonly isLoading$ = this._isLoading.asObservable();
+
+  // Events — useEvent() listens to these, never replayed
+  private _navigateTo = new EventFlow<string>();
+  private _showSnackbar = new EventFlow<string>();
+
+  public readonly navigateTo$ = this._navigateTo.asObservable();
+  public readonly showSnackbar$ = this._showSnackbar.asObservable();
+
+  async placeOrder() {
+    this._isLoading.value = true;
+    try {
+      await fetch('/api/orders', {
+        method: 'POST',
+        signal: this.abortController.signal,
+      });
+      // Fire once — new subscribers will NOT receive this
+      this._navigateTo.emit('OrderSuccessScreen');
+    } catch (e) {
+      if ((e as Error).name !== 'AbortError') {
+        this._showSnackbar.emit('Order failed. Please try again.');
+      }
+    } finally {
+      this._isLoading.value = false;
+    }
+  }
+}
+```
+
+#### Members
+
+| Member | Type | Description |
+|---|---|---|
+| `emit(value)` | `void` | Fires the event to all current subscribers. New subscribers will not receive it. |
+| `asObservable()` | `Observable<T>` | Exposes a read-only stream to the UI. |
+
+---
+
+### `useEvent<T>(observable$, handler)`
+
+Subscribes to an `EventFlow` observable and runs a side-effect callback — **without causing a re-render**.  
+Analogous to `BlocListener` in Flutter or `LaunchedEffect` + `collectLatest` in Compose.
+
+> **Do not use `useStream` for EventFlow.** `useStream` stores state and triggers re-renders, which is wrong for fire-and-forget events.
+
+```tsx
+// CheckoutScreen.tsx
+import { useCallback } from 'react';
+import { useViewModel, useStream, useEvent } from 'react-native-mobile-mvvm';
+import { useNavigation } from '@react-navigation/native';
+import { CheckoutViewModel } from './CheckoutViewModel';
+
+const CheckoutScreen = () => {
+  const vm = useViewModel(CheckoutViewModel);
+  const navigation = useNavigation();
+
+  // State — renders when isLoading changes
+  const isLoading = useStream(vm.isLoading$, false);
+
+  // Events — side effects only, no re-render
+  useEvent(
+    vm.navigateTo$,
+    useCallback((route) => {
+      navigation.navigate(route as never);
+    }, [navigation]),
+  );
+
+  useEvent(
+    vm.showSnackbar$,
+    useCallback((message) => {
+      // Your snackbar library of choice
+      Snackbar.show({ text: message, duration: Snackbar.LENGTH_SHORT });
+    }, []),
+  );
+
+  return (
+    <View>
+      <Button
+        title={isLoading ? 'Placing order...' : 'Place Order'}
+        disabled={isLoading}
+        onPress={() => vm.placeOrder()}
+      />
+    </View>
+  );
+};
+```
+
+> **Tip:** Always wrap `handler` in `useCallback`. An unstable function reference causes `useEvent` to re-subscribe on every render.
+
+#### Parameters
+
+| Parameter | Type | Description |
+|---|---|---|
+| `observable$` | `Observable<T>` | The EventFlow observable to listen to. |
+| `handler` | `(value: T) => void` | Side-effect callback. Wrap in `useCallback` to keep it stable. |
+
+**Behaviour:**
+- Does NOT store the value in React state — no re-render.
+- Subscribes on mount, unsubscribes on unmount.
+- Re-subscribes if `observable$` or `handler` reference changes.
 
 ---
 

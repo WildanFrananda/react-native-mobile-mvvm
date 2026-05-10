@@ -43,13 +43,15 @@
  * ```
  */
 
-// Core — ViewModel & StateFlow
+// Core — ViewModel, StateFlow & EventFlow
 export { ViewModel } from './core/ViewModel';
 export { StateFlow } from './core/StateFlow';
+export { EventFlow } from './core/EventFlow';
 
 // Hooks — React UI Bindings
 export { useViewModel } from './hooks/useViewModel';
 export { useStream } from './hooks/useStream';
+export { useEvent } from './hooks/useEvent';
 
 // Types
 export type { Constructor, InjectionToken } from './types';
