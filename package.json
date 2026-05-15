@@ -1,6 +1,6 @@
 {
   "name": "react-native-mobile-mvvm",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "description": "MVVM Architecture Standard for React Native — Compose/Flutter DX (ViewModel, StateFlow, DI)",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
@@ -44,11 +44,12 @@
   "peerDependencies": {
     "react": ">=18",
     "react-native": ">=0.71",
+    "reflect-metadata": "^0.2",
     "rxjs": "^7",
-    "tsyringe": "^4",
-    "reflect-metadata": "^0.2"
+    "tsyringe": "^4"
   },
   "devDependencies": {
+    "@swc/core": "^1.15.33",
     "@types/react": "^19.2.14",
     "@types/react-native": "^0.72.8",
     "react": "^19.2.6",

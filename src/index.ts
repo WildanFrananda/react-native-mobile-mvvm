@@ -50,7 +50,8 @@
 // Core — ViewModel, StateFlow, EventFlow, ComputedStateFlow & UiState
 export { ViewModel } from './core/ViewModel';
 export { StateFlow } from './core/StateFlow';
-export { ReadOnlyStateFlow } from './core/StateFlow';
+import type { ReadOnlyStateFlow as IReadOnlyStateFlow } from './core/StateFlow';
+export type ReadOnlyStateFlow<T> = IReadOnlyStateFlow<T>;
 export { EventFlow } from './core/EventFlow';
 export { ComputedStateFlow } from './core/ComputedStateFlow';
 export { UiState } from './core/UiState';
