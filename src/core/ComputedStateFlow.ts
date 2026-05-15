@@ -6,8 +6,8 @@ import type { ReadOnlyStateFlow, StateFlow } from './StateFlow';
  * Infers the value type tuple from an array of StateFlow instances.
  * StateFlow<string>[] -> [string, ...]
  */
-type InferValues<T extends StateFlow<unknown>[]> = {
-  [K in keyof T]: T[K] extends StateFlow<infer V> ? V : never;
+type InferValues<T extends ReadOnlyStateFlow<any>[]> = {
+  [K in keyof T]: T[K] extends ReadOnlyStateFlow<infer V> ? V : never;
 };
 
 /**
@@ -15,8 +15,8 @@ type InferValues<T extends StateFlow<unknown>[]> = {
  */
 class DerivedStateFlow<R> implements ReadOnlyStateFlow<R> {
   constructor(
-    private readonly sources: StateFlow<unknown>[],
-    private readonly compute: (values: unknown[]) => R,
+    private readonly sources: ReadOnlyStateFlow<any>[],
+    private readonly compute: (values: any[]) => R,
   ) {}
 
   get value(): R {
@@ -71,13 +71,13 @@ export class ComputedStateFlow {
    * @param compute - Pure function that derives the new value from current source values
    * @returns ReadOnlyStateFlow<R>
    */
-  static from<T extends StateFlow<unknown>[], R>(
+  static from<T extends ReadOnlyStateFlow<any>[], R>(
     sources: [...T],
     compute: (values: InferValues<T>) => R,
   ): ReadOnlyStateFlow<R> {
     return new DerivedStateFlow(
       sources,
-      compute as (values: unknown[]) => R,
+      compute as (values: any[]) => R,
     );
   }
 }
