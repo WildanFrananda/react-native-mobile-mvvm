@@ -50,7 +50,7 @@
 // Core — ViewModel, StateFlow, EventFlow, ComputedStateFlow & UiState
 export { ViewModel } from './core/ViewModel';
 export { StateFlow } from './core/StateFlow';
-export { ReadOnlyStateFlow } from './core/StateFlow';
+export type { ReadOnlyStateFlow } from './core/StateFlow';
 export { EventFlow } from './core/EventFlow';
 export { ComputedStateFlow } from './core/ComputedStateFlow';
 export { UiState } from './core/UiState';
