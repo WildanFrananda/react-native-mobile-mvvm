@@ -4,16 +4,16 @@ import { BehaviorSubject, Observable } from 'rxjs';
  * ReadOnlyStateFlow<T> — A read-only version of StateFlow.
  * Allows synchronous access to the current value and observing changes via an Observable.
  */
-export interface ReadOnlyStateFlow<T> {
+export abstract class ReadOnlyStateFlow<T> {
   /**
    * Reads the current state value synchronously.
    */
-  readonly value: T;
+  abstract get value(): T;
 
   /**
    * Exposes a read-only stream to the UI layer.
    */
-  asObservable(): Observable<T>;
+  abstract asObservable(): Observable<T>;
 }
 
 /**
