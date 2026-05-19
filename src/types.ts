@@ -5,7 +5,7 @@
  * @example
  * function useViewModel<T extends ViewModel>(cls: Constructor<T>): T
  */
-export type Constructor<T = unknown> = new (...args: unknown[]) => T;
+export type Constructor<T = unknown> = new (...args: any[]) => T;
 
 /**
  * DI injection token — can be a string, symbol, or class constructor.
