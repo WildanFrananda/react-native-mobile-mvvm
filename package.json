@@ -20,6 +20,7 @@
   "files": [
     "dist"
   ],
+  "sideEffects": false,
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
@@ -43,6 +44,14 @@
   ],
   "author": "Wildan Frananda <wildanrailfanskrl@gmail.com>",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/WildanFrananda/react-native-mobile-mvvm.git"
+  },
+  "bugs": {
+    "url": "https://github.com/WildanFrananda/react-native-mobile-mvvm/issues"
+  },
+  "homepage": "https://github.com/WildanFrananda/react-native-mobile-mvvm#readme",
   "peerDependencies": {
     "react": ">=18",
     "react-native": ">=0.71",
