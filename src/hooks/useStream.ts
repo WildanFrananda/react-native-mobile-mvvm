@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 import { Observable, Subscription } from 'rxjs';
 import type { ReadOnlyStateFlow } from '../core/StateFlow';
@@ -37,7 +37,13 @@ export function useStream<T>(
   source: Observable<T> | ReadOnlyStateFlow<T>,
   defaultValue: T,
 ): T {
-  const observable$ = 'asObservable' in source ? source.asObservable() : source;
+  // Memoise so the Observable identity is stable across renders. Without this,
+  // `source.asObservable()` returns a new wrapper every render, changing the
+  // `useEffect` dependency below and forcing a re-subscribe on every render.
+  const observable$ = useMemo(
+    () => ('asObservable' in source ? source.asObservable() : source),
+    [source],
+  );
 
   const [state, setState] = useState<T>(() => {
     // Eagerly read the current value on init to avoid a flicker render with defaultValue.

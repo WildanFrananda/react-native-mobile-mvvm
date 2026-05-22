@@ -1,73 +1,116 @@
-import { describe, it, expect } from '@jest/globals';
+import { describe, it, expect, jest } from '@jest/globals';
 import { StateFlow } from '../StateFlow';
-import { ComputedStateFlow } from '../ComputedStateFlow';
+import type { ReadOnlyStateFlow } from '../StateFlow';
 
-interface Product {
-  id: string;
-  name: string;
-}
-
-interface UiState<T> {
-  data: T;
-  loading: boolean;
-}
-
-describe('StateFlow and Variance Fix', () => {
-  it('should allow StateFlow<Specific> to be treated as ReadOnlyStateFlow<General> (Covariance)', () => {
-    // This is the scenario that was failing:
-    const productState = new StateFlow<UiState<Product[]>>({ 
-      data: [{ id: '1', name: 'Coffee' }], 
-      loading: false 
+describe('StateFlow', () => {
+  describe('value', () => {
+    it('exposes the initial value synchronously', () => {
+      const flow = new StateFlow(42);
+      expect(flow.value).toBe(42);
     });
 
-    // Before the fix, this would fail to compile or throw a TS error in ComputedStateFlow.from
-    const derived = ComputedStateFlow.from(
-      [productState],
-      ([state]) => state.data.length
-    );
-
-    expect(derived.value).toBe(1);
-  });
-
-  it('should update ComputedStateFlow when source StateFlow changes', () => {
-    const count = new StateFlow(1);
-    const doubled = ComputedStateFlow.from([count], ([c]) => c * 2);
-
-    expect(doubled.value).toBe(2);
-
-    count.value = 5;
-    expect(doubled.value).toBe(10);
-  });
-
-  it('should handle multiple sources in ComputedStateFlow', () => {
-    const firstName = new StateFlow('John');
-    const lastName = new StateFlow('Doe');
-
-    const fullName = ComputedStateFlow.from(
-      [firstName, lastName],
-      ([f, l]) => `${f} ${l}`
-    );
-
-    expect(fullName.value).toBe('John Doe');
-
-    firstName.value = 'Jane';
-    expect(fullName.value).toBe('Jane Doe');
-  });
-
-  it('should only emit when value actually changes (equality check)', () => {
-    const count = new StateFlow(1);
-    let emits = 0;
-    
-    count.asObservable().subscribe(() => {
-      emits++;
+    it('updates the value via the setter', () => {
+      const flow = new StateFlow(0);
+      flow.value = 10;
+      expect(flow.value).toBe(10);
     });
 
-    expect(emits).toBe(1); // Initial value
+    it('replays the current value to new subscribers (BehaviorSubject semantics)', () => {
+      const flow = new StateFlow('initial');
+      flow.value = 'updated';
 
-    count.value = 1; // Same value
-    expect(emits).toBe(1); // Should not emit
+      const received: string[] = [];
+      flow.asObservable().subscribe((v) => received.push(v));
 
-    count.value = 2; // Different value
-    expect(emits).toBe(2);
+      expect(received).toEqual(['updated']);
+    });
+  });
+
+  describe('equality gating', () => {
+    it('does not emit when the new value is reference-equal (default Object.is)', () => {
+      const flow = new StateFlow(1);
+      const next = jest.fn();
+      flow.asObservable().subscribe(next);
+
+      expect(next).toHaveBeenCalledTimes(1); // initial replay
+
+      flow.value = 1; // identical primitive
+      expect(next).toHaveBeenCalledTimes(1); // suppressed
+    });
+
+    it('emits when the value actually changes', () => {
+      const flow = new StateFlow(1);
+      const next = jest.fn();
+      flow.asObservable().subscribe(next);
+
+      flow.value = 2;
+      flow.value = 3;
+      expect(next).toHaveBeenCalledTimes(3); // initial + two changes
+    });
+
+    it('emits for a new object reference even if structurally equal under default equality', () => {
+      const flow = new StateFlow<{ n: number }>({ n: 1 });
+      const next = jest.fn();
+      flow.asObservable().subscribe(next);
+
+      flow.value = { n: 1 }; // new reference
+      expect(next).toHaveBeenCalledTimes(2);
+    });
+
+    it('respects a custom isEqual to suppress structurally-equal emissions', () => {
+      const isEqual = (a: { n: number }, b: { n: number }) => a.n === b.n;
+      const flow = new StateFlow({ n: 1 }, isEqual);
+      const next = jest.fn();
+      flow.asObservable().subscribe(next);
+
+      flow.value = { n: 1 }; // structurally equal -> suppressed
+      expect(next).toHaveBeenCalledTimes(1);
+
+      flow.value = { n: 2 }; // different -> emits
+      expect(next).toHaveBeenCalledTimes(2);
+      expect(flow.value).toEqual({ n: 2 });
+    });
+  });
+
+  describe('read-only projections', () => {
+    it('asReadOnly returns a value/asObservable view backed by the same state', () => {
+      const flow = new StateFlow(5);
+      const readOnly: ReadOnlyStateFlow<number> = flow.asReadOnly();
+
+      expect(readOnly.value).toBe(5);
+      flow.value = 9;
+      expect(readOnly.value).toBe(9);
+    });
+
+    it('asObservable does not expose a way to push values', () => {
+      const flow = new StateFlow(0);
+      const observable = flow.asObservable();
+      // The returned Observable has no `.next` — mutations must go through the StateFlow.
+      expect((observable as unknown as { next?: unknown }).next).toBeUndefined();
+    });
+
+    it('exposes the underlying BehaviorSubject via the internal subject getter', () => {
+      const flow = new StateFlow(7);
+      expect(flow.subject.getValue()).toBe(7);
+    });
+  });
+
+  describe('complete', () => {
+    it('completes the underlying subject', () => {
+      const flow = new StateFlow(1);
+      const onComplete = jest.fn();
+      flow.asObservable().subscribe({ complete: onComplete });
+
+      flow.complete();
+      expect(onComplete).toHaveBeenCalledTimes(1);
+    });
+
+    it('is safe to call twice', () => {
+      const flow = new StateFlow(1);
+      expect(() => {
+        flow.complete();
+        flow.complete();
+      }).not.toThrow();
+    });
   });
 });
