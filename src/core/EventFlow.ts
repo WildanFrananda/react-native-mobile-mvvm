@@ -56,7 +56,9 @@ export class EventFlow<T> {
   }
 
   /**
-   * Completes the Subject — called by ViewModel.onCleared() to prevent memory leaks.
+   * Completes the Subject — called automatically by `ViewModel.clear()`, which
+   * discovers and completes the StateFlow/EventFlow instances a ViewModel owns
+   * to prevent memory leaks.
    * @internal
    */
   complete(): void {

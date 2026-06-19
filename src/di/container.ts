@@ -2,31 +2,31 @@ import { container } from 'tsyringe';
 import type { Constructor } from '../types';
 
 /**
- * Checks whether the DI container can resolve the given token.
- * This allows `useViewModel` to work with or without DI configuration.
- */
-function tryResolveFromContainer<T>(ViewModelClass: Constructor<T>): T | null {
-  try {
-    return container.resolve(ViewModelClass as never);
-  } catch {
-    return null;
-  }
-}
-
-/**
  * Creates a ViewModel instance — prioritises DI container resolution,
- * falls back to `new ClassName()` if the class is not registered.
+ * falls back to `new ClassName()` only for dependency-free ViewModels.
  *
  * Resolution order (analogous to Hilt with a manual instantiation fallback):
- * 1. Attempt resolution from the tsyringe container (if class is decorated with @injectable)
- * 2. Fall back to `new ViewModelClass()` (for simple ViewModels without DI)
+ * 1. Attempt resolution from the tsyringe container (works for `@injectable`
+ *    classes and explicitly registered tokens).
+ * 2. If resolution fails AND the class declares no constructor parameters,
+ *    fall back to `new ViewModelClass()` — the "simple ViewModel without DI" path.
+ *
+ * If resolution fails for a class that DOES declare constructor parameters, the
+ * original tsyringe error is re-thrown rather than swallowed. Falling back to
+ * `new ViewModelClass()` there would construct the ViewModel with `undefined`
+ * dependencies and hide the real cause (usually a missing registration),
+ * surfacing later as an unrelated `TypeError`. Re-throwing keeps the actionable
+ * "cannot inject the dependency …" diagnostic.
  */
 export function createViewModelInstance<T>(ViewModelClass: Constructor<T>): T {
-  const resolved = tryResolveFromContainer(ViewModelClass);
-  if (resolved !== null) {
-    return resolved;
+  try {
+    return container.resolve<T>(ViewModelClass as never);
+  } catch (error) {
+    if (ViewModelClass.length === 0) {
+      return new ViewModelClass();
+    }
+    throw error;
   }
-  return new ViewModelClass();
 }
 
 /**

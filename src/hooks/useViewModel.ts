@@ -1,7 +1,24 @@
-import { useDebugValue, useEffect, useRef } from 'react';
+import { useDebugValue, useEffect, useRef, useState } from 'react';
 import type { ViewModel } from '../core/ViewModel';
 import { createViewModelInstance } from '../di/container';
 import type { Constructor } from '../types';
+
+/**
+ * Reliably distinguishes a class constructor from a factory function.
+ *
+ * The previous `fn.prototype.constructor === fn` heuristic was true for EVERY
+ * ordinary (non-arrow) function, so a named factory like
+ * `function makeVm() { return new Vm(); }` was misclassified as a class and
+ * routed through the DI container + `new`. Checking the source string only
+ * matches real `class` declarations, so both arrow and named factories are
+ * correctly treated as factories.
+ */
+function isClassConstructor(fn: unknown): boolean {
+  return (
+    typeof fn === 'function' &&
+    /^class[\s{]/.test(Function.prototype.toString.call(fn))
+  );
+}
 
 /**
  * useViewModel<T> — Create and bind a ViewModel instance to the React component lifecycle.
@@ -38,25 +55,27 @@ import type { Constructor } from '../types';
 export function useViewModel<T extends ViewModel>(
   factoryOrClass: Constructor<T> | (() => T),
 ): T {
-  // useRef ensures the instance is created ONCE — it does not change across re-renders.
-  const viewModelRef = useRef<T | null>(null);
+  // Keep the latest factory/class without re-creating the instance on re-render.
+  const factoryRef = useRef(factoryOrClass);
+  factoryRef.current = factoryOrClass;
 
-  if (viewModelRef.current === null) {
-    // Determine if we have a class constructor or a factory function.
-    // In JS, classes are functions with a prototype.
-    const isClass =
-      typeof factoryOrClass === 'function' &&
-      factoryOrClass.prototype &&
-      factoryOrClass.prototype.constructor === factoryOrClass;
+  const create = (): T => {
+    const f = factoryRef.current;
+    return isClassConstructor(f)
+      ? createViewModelInstance(f as Constructor<T>)
+      : (f as () => T)();
+  };
 
-    if (isClass) {
-      viewModelRef.current = createViewModelInstance(
-        factoryOrClass as Constructor<T>,
-      );
-    } else {
-      viewModelRef.current = (factoryOrClass as () => T)();
-    }
-  }
+  // Created once via the lazy initializer; the instance survives re-renders.
+  const [viewModel, setViewModel] = useState<T>(create);
+
+  // Always points at the live instance so the unmount cleanup clears whichever
+  // instance is current (important under the StrictMode re-create path below).
+  const viewModelRef = useRef(viewModel);
+  viewModelRef.current = viewModel;
+
+  // Tracks whether the cleanup below has already cleared the current instance.
+  const clearedRef = useRef(false);
 
   // Exposes the ViewModel name in React DevTools.
   const label =
@@ -66,11 +85,25 @@ export function useViewModel<T extends ViewModel>(
   useDebugValue(label);
 
   useEffect(() => {
+    // Under React 18/19 StrictMode the effect runs setup -> cleanup -> setup
+    // WITHOUT re-running render. The first cleanup calls clear() (which is
+    // irreversible: destroy$ completes, the AbortController aborts). If we did
+    // nothing here, the component would stay bound to that torn-down instance.
+    // So when re-entering setup after a clear, build a fresh instance and push
+    // it into state to re-render with a live ViewModel.
+    if (clearedRef.current) {
+      clearedRef.current = false;
+      const fresh = create();
+      viewModelRef.current = fresh;
+      setViewModel(fresh);
+    }
+
     return () => {
-      viewModelRef.current?.clear();
-      viewModelRef.current = null;
+      clearedRef.current = true;
+      viewModelRef.current.clear();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return viewModelRef.current;
+  return viewModel;
 }

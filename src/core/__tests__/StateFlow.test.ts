@@ -89,9 +89,13 @@ describe('StateFlow', () => {
       expect((observable as unknown as { next?: unknown }).next).toBeUndefined();
     });
 
-    it('exposes the underlying BehaviorSubject via the internal subject getter', () => {
+    it('does not leak the underlying mutable subject to consumers', () => {
       const flow = new StateFlow(7);
-      expect(flow.subject.getValue()).toBe(7);
+      // The raw BehaviorSubject is private — there must be no public `subject`
+      // handle that would let the UI call .next()/.complete()/.error() and
+      // bypass the read-only contract. Current value is read via `.value`.
+      expect((flow as unknown as { subject?: unknown }).subject).toBeUndefined();
+      expect(flow.value).toBe(7);
     });
   });
 

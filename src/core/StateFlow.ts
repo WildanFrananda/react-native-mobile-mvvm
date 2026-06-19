@@ -91,17 +91,8 @@ export class StateFlow<T> implements ReadOnlyStateFlow<T> {
   }
 
   /**
-   * Direct access to the underlying BehaviorSubject for internal ViewModel use
-   * (e.g. `takeUntil`, `combineLatest`). Not intended for UI consumers.
-   *
-   * @internal
-   */
-  get subject(): BehaviorSubject<T> {
-    return this._subject;
-  }
-
-  /**
-   * Completes the Subject — called by ViewModel.onCleared()
+   * Completes the Subject — called automatically by `ViewModel.clear()`, which
+   * discovers and completes the StateFlow/EventFlow instances a ViewModel owns
    * to prevent memory leaks.
    *
    * @internal

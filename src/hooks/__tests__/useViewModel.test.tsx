@@ -1,4 +1,5 @@
 import { describe, it, expect } from '@jest/globals';
+import { StrictMode } from 'react';
 import { renderHook } from '@testing-library/react';
 import { useViewModel } from '../useViewModel';
 import { ViewModel } from '../../core/ViewModel';
@@ -33,6 +34,40 @@ describe('useViewModel', () => {
 
     expect(result.current).toBeInstanceOf(GreetVM);
     expect(result.current.name).toBe('Ada');
+  });
+
+  it('supports a named (non-arrow) factory function', () => {
+    class GreetVM extends ViewModel {
+      constructor(public readonly name: string) {
+        super();
+      }
+    }
+    function makeGreetVM(): GreetVM {
+      return new GreetVM('Grace');
+    }
+
+    const { result } = renderHook(() => useViewModel(makeGreetVM));
+
+    // A named function must NOT be misclassified as a class and `new`-ed.
+    expect(result.current).toBeInstanceOf(GreetVM);
+    expect(result.current.name).toBe('Grace');
+  });
+
+  it('returns a live (non-cleared) ViewModel under StrictMode double-invoke', () => {
+    class TrackedVM extends ViewModel {
+      get aborted(): boolean {
+        return this.abortController.signal.aborted;
+      }
+    }
+
+    const { result } = renderHook(() => useViewModel(TrackedVM), {
+      wrapper: StrictMode,
+    });
+
+    // The StrictMode mount runs setup -> cleanup -> setup; the hook must rebind
+    // to a fresh, live instance rather than the cleared one.
+    expect(result.current).toBeInstanceOf(TrackedVM);
+    expect(result.current.aborted).toBe(false);
   });
 
   it('clears the ViewModel on unmount', () => {

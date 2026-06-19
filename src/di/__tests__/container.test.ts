@@ -22,13 +22,18 @@ describe('DI container', () => {
   });
 
   describe('createViewModelInstance', () => {
-    it('falls back to `new` when the class cannot be resolved from the container', () => {
-      // NeedsArgs has a constructor arg and is not registered/decorated, so
-      // tsyringe resolution throws and the fallback `new NeedsArgs()` is used.
-      const instance = createViewModelInstance(NeedsArgs);
+    it('falls back to `new` for a dependency-free class that is not registered', () => {
+      // Plain has no constructor args — the "simple ViewModel without DI" path.
+      const instance = createViewModelInstance(Plain);
 
-      expect(instance).toBeInstanceOf(NeedsArgs);
-      expect(instance.dep).toBeUndefined();
+      expect(instance).toBeInstanceOf(Plain);
+    });
+
+    it('rethrows when a class that declares dependencies cannot be resolved', () => {
+      // NeedsArgs declares a constructor parameter but is not registered, so
+      // resolution fails. Rather than silently `new NeedsArgs()` (producing an
+      // instance with `undefined` dependencies), the original error surfaces.
+      expect(() => createViewModelInstance(NeedsArgs)).toThrow();
     });
 
     it('returns the container-resolved instance when the class is registered', () => {
