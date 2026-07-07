@@ -13,6 +13,9 @@
     "declaration": true,
     "declarationMap": true,
     "outDir": "dist",
+    // Required by the tsup DTS build on TypeScript 6: rollup-plugin-dts injects a
+    // `baseUrl`, which TS6 deprecates (TS5101). Not inert — removing it breaks
+    // `npm run build` even though `tsc --noEmit` alone passes without it.
     "ignoreDeprecations": "6.0"
   },
   "include": ["src"]

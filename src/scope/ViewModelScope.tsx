@@ -60,7 +60,17 @@ export function ViewModelScope({
   useEffect(() => {
     const store = storeRef.current;
     return () => {
-      store.forEach((vm) => vm.clear());
+      // Isolate each teardown: one ViewModel's failure must not prevent the
+      // remaining scoped ViewModels from being cleared (leaking their fetches,
+      // subscriptions and streams). ViewModel.clear() already guards the user
+      // onCleared() hook; this is defense-in-depth for any other failure.
+      store.forEach((vm) => {
+        try {
+          vm.clear();
+        } catch (error) {
+          console.error(error);
+        }
+      });
       store.clear();
     };
   }, []);

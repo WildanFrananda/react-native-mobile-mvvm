@@ -48,6 +48,38 @@ describe('ViewModelScope', () => {
     expect(vm?.cleared).toBe(true);
   });
 
+  it('clears sibling ViewModels even if one onCleared() throws', () => {
+    class BoomVM extends ViewModel {
+      protected onCleared(): void {
+        throw new Error('boom');
+      }
+    }
+    class OkVM extends ViewModel {
+      get aborted(): boolean {
+        return this.abortController.signal.aborted;
+      }
+    }
+    let ok: OkVM | undefined;
+    const Child = (): null => {
+      // BoomVM resolves first (inserted first in the scope store), so its
+      // throwing teardown must not prevent OkVM from being cleared.
+      useScopedViewModel(BoomVM);
+      ok = useScopedViewModel(OkVM);
+      return null;
+    };
+
+    const spy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const { unmount } = render(
+      <ViewModelScope>
+        <Child />
+      </ViewModelScope>,
+    );
+
+    unmount();
+    expect(ok?.aborted).toBe(true);
+    spy.mockRestore();
+  });
+
   it('supports a manual factory and uses it once', () => {
     let vm: SharedVM | undefined;
     const factory = jest.fn(() => new SharedVM());

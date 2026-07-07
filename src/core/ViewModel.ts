@@ -103,7 +103,9 @@ export abstract class ViewModel {
 
     // 3. Complete the StateFlow/EventFlow instances this ViewModel owns so that
     //    direct subscribers receive completion. Discovered by inspecting the
-    //    instance's own fields — no manual registration required.
+    //    instance's OWN enumerable fields — flows held indirectly (in an array,
+    //    Map, Set, nested object, or exposed only via a getter) are not found
+    //    and must be completed manually in `onCleared()`.
     for (const value of Object.values(this)) {
       if (value instanceof StateFlow || value instanceof EventFlow) {
         value.complete();
@@ -111,8 +113,15 @@ export abstract class ViewModel {
     }
 
     // 4. Run the user cleanup hook LAST, after framework-managed subscriptions
-    //    and fetches have already been torn down.
-    this.onCleared();
+    //    and fetches have already been torn down. Guard it so a throwing
+    //    onCleared() cannot abort framework teardown — critical inside
+    //    ViewModelScope, where one throwing hook would otherwise leave every
+    //    sibling ViewModel in the scope uncleared.
+    try {
+      this.onCleared();
+    } catch (error) {
+      console.error(error);
+    }
   }
 
   /**

@@ -91,9 +91,10 @@ export class StateFlow<T> implements ReadOnlyStateFlow<T> {
   }
 
   /**
-   * Completes the Subject — called automatically by `ViewModel.clear()`, which
-   * discovers and completes the StateFlow/EventFlow instances a ViewModel owns
-   * to prevent memory leaks.
+   * Completes the Subject — called automatically by `ViewModel.clear()` for
+   * StateFlow instances held in the ViewModel's own fields, to prevent memory
+   * leaks. Flows held indirectly (arrays, Maps, getters) must be completed
+   * manually in `onCleared()`.
    *
    * @internal
    */

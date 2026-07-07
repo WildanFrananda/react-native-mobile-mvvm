@@ -69,6 +69,40 @@ describe('ComputedStateFlow', () => {
 
       expect(received).toEqual([5, 13, 10]);
     });
+
+    it('does not re-emit when the derived value is unchanged', () => {
+      const a = new StateFlow(2);
+      const b = new StateFlow(0);
+      // Derived depends only on `a`; changes to `b` must not re-emit.
+      const derived = ComputedStateFlow.from([a, b], ([x]) => x * 2);
+
+      const received: number[] = [];
+      derived.asObservable().subscribe((v) => received.push(v));
+
+      b.value = 1; // unrelated -> still 4 -> deduped
+      b.value = 2; // unrelated -> still 4 -> deduped
+      a.value = 3; // -> 6
+
+      expect(received).toEqual([4, 6]);
+    });
+
+    it('accepts a custom isEqual to de-duplicate object results', () => {
+      const a = new StateFlow(1);
+      const derived = ComputedStateFlow.from(
+        [a],
+        ([x]) => ({ even: x % 2 === 0 }),
+        (p, q) => p.even === q.even,
+      );
+
+      const received: Array<{ even: boolean }> = [];
+      derived.asObservable().subscribe((v) => received.push(v));
+
+      a.value = 3; // odd -> still { even: false } -> deduped
+      a.value = 5; // odd -> deduped
+      a.value = 2; // even -> emits
+
+      expect(received.map((r) => r.even)).toEqual([false, true]);
+    });
   });
 
   describe('typing / variance', () => {

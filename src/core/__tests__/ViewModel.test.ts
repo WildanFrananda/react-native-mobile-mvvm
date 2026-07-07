@@ -92,6 +92,27 @@ describe('ViewModel', () => {
       expect(() => vm.clear()).not.toThrow();
     });
 
+    it('does not let a throwing onCleared() abort framework teardown', () => {
+      class ThrowingVM extends ViewModel {
+        get controllerSignal(): AbortSignal {
+          return this.abortController.signal;
+        }
+        protected onCleared(): void {
+          throw new Error('cleanup boom');
+        }
+      }
+      const vm = new ThrowingVM();
+      const spy = jest
+        .spyOn(console, 'error')
+        .mockImplementation(() => undefined);
+
+      expect(() => vm.clear()).not.toThrow();
+      // Framework teardown (abort) still ran despite the throwing hook.
+      expect(vm.controllerSignal.aborted).toBe(true);
+      expect(spy).toHaveBeenCalledTimes(1);
+      spy.mockRestore();
+    });
+
     it('completes the StateFlow/EventFlow instances it owns', () => {
       class FlowVM extends ViewModel {
         readonly count = new StateFlow(0);

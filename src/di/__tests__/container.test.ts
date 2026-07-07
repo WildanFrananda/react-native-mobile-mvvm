@@ -1,5 +1,5 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import { container } from 'tsyringe';
+import { container, injectable, inject } from 'tsyringe';
 import {
   createViewModelInstance,
   configureDI,
@@ -12,8 +12,17 @@ class Plain {
   }
 }
 
+// Undecorated class with an OPTIONAL constructor param — it never opted into DI,
+// so it must fall back to `new` (constructor arity alone must not force a throw).
 class NeedsArgs {
   constructor(public dep?: string) {}
+}
+
+// Decorated class whose injected dependency token is never registered — a real
+// DI misconfiguration that must surface, not be masked by a `new` fallback.
+@injectable()
+class NeedsMissingDep {
+  constructor(@inject('MissingToken') public dep: unknown) {}
 }
 
 describe('DI container', () => {
@@ -29,11 +38,21 @@ describe('DI container', () => {
       expect(instance).toBeInstanceOf(Plain);
     });
 
-    it('rethrows when a class that declares dependencies cannot be resolved', () => {
-      // NeedsArgs declares a constructor parameter but is not registered, so
-      // resolution fails. Rather than silently `new NeedsArgs()` (producing an
-      // instance with `undefined` dependencies), the original error surfaces.
-      expect(() => createViewModelInstance(NeedsArgs)).toThrow();
+    it('falls back to `new` for an undecorated class with an optional param', () => {
+      // NeedsArgs declares an optional constructor param but never opted into DI
+      // (no decorator). It must NOT throw just because it has a parameter — it
+      // falls back to `new`, leaving the optional dependency undefined.
+      const instance = createViewModelInstance(NeedsArgs);
+
+      expect(instance).toBeInstanceOf(NeedsArgs);
+      expect(instance.dep).toBeUndefined();
+    });
+
+    it('rethrows when a DI-decorated class has an unresolvable dependency', () => {
+      // NeedsMissingDep is @injectable with an @inject token that is not
+      // registered. This is a real DI misconfiguration and must surface rather
+      // than silently construct with `undefined` dependencies.
+      expect(() => createViewModelInstance(NeedsMissingDep)).toThrow();
     });
 
     it('returns the container-resolved instance when the class is registered', () => {
